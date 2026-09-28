@@ -2081,4 +2081,5 @@ export default function (pi: Pi.ExtensionAPI) {
     recordRuntimeEvent,
   });
   Pi.registerPiRemoteDialogResponder(pi, remoteDialogs.offer);
+  Pi.registerPiCodeQuestionResponder(pi, telegramSessionContextStore.get, remoteDialogs.offerQuestion);
 }

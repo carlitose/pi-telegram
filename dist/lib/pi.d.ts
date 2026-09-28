@@ -32,6 +32,35 @@ export type PiRemoteDialogResponse = {
     value: string | boolean | undefined;
 };
 export declare function registerPiRemoteDialogResponder(pi: ExtensionAPI, handler: (event: PiRemoteDialogRequest, ctx: ExtensionContext) => Promise<PiRemoteDialogResponse>): void;
+export declare const PI_CODE_QUESTION_CHANNEL = "pi-code:question:v1";
+export type PiCodeQuestionOutcome = {
+    action: "answer";
+    indices: number[];
+} | {
+    action: "text";
+    text: string;
+} | {
+    action: "cancel";
+} | {
+    action: "pass";
+};
+export interface PiCodeQuestionOffer {
+    version: 1;
+    requestId: string;
+    sessionId: string;
+    question: string;
+    header?: string;
+    options: Array<{
+        label: string;
+        description?: string;
+    }>;
+    multiSelect: boolean;
+    allowFreeText: boolean;
+    signal: AbortSignal;
+    claim(): ((outcome: PiCodeQuestionOutcome) => boolean) | undefined;
+    touch(): boolean;
+}
+export declare function registerPiCodeQuestionResponder(pi: ExtensionAPI, getContext: () => ExtensionContext | undefined, handler: (offer: PiCodeQuestionOffer, ctx: ExtensionContext) => void): void;
 export interface SessionCompactFailedEvent {
     type: "session_compact_failed";
     reason: "manual" | "threshold" | "overflow";

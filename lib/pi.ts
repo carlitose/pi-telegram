@@ -75,6 +75,59 @@ export function registerPiRemoteDialogResponder(
   register("ui_prompt_request", handler);
 }
 
+// pi-code owns this versioned in-process event. Keep the structural view at the
+// Pi boundary instead of importing a second extension's package-private source.
+export const PI_CODE_QUESTION_CHANNEL = "pi-code:question:v1";
+export type PiCodeQuestionOutcome =
+  | { action: "answer"; indices: number[] }
+  | { action: "text"; text: string }
+  | { action: "cancel" }
+  | { action: "pass" };
+
+export interface PiCodeQuestionOffer {
+  version: 1;
+  requestId: string;
+  sessionId: string;
+  question: string;
+  header?: string;
+  options: Array<{ label: string; description?: string }>;
+  multiSelect: boolean;
+  allowFreeText: boolean;
+  signal: AbortSignal;
+  claim(): ((outcome: PiCodeQuestionOutcome) => boolean) | undefined;
+  touch(): boolean;
+}
+
+function isPiCodeQuestionOffer(value: unknown): value is PiCodeQuestionOffer {
+  if (!value || typeof value !== "object") return false;
+  const offer = value as Record<string, unknown>;
+  const signal = offer.signal as Partial<AbortSignal> | undefined;
+  return offer.version === 1 && typeof offer.requestId === "string" &&
+    /^[A-Za-z0-9-]{1,64}$/.test(offer.requestId) &&
+    typeof offer.sessionId === "string" && offer.sessionId.length > 0 &&
+    typeof offer.question === "string" && (offer.header === undefined || typeof offer.header === "string") &&
+    Array.isArray(offer.options) && offer.options.length >= 2 && offer.options.length <= 4 &&
+    offer.options.every((option: unknown) => !!option && typeof option === "object" &&
+      typeof (option as { label?: unknown }).label === "string" &&
+      ((option as { description?: unknown }).description === undefined || typeof (option as { description?: unknown }).description === "string")) &&
+    typeof offer.multiSelect === "boolean" && offer.allowFreeText === !offer.multiSelect &&
+    typeof signal?.aborted === "boolean" && typeof signal.addEventListener === "function" &&
+    typeof signal.removeEventListener === "function" && typeof offer.claim === "function" &&
+    typeof offer.touch === "function";
+}
+
+export function registerPiCodeQuestionResponder(
+  pi: ExtensionAPI,
+  getContext: () => ExtensionContext | undefined,
+  handler: (offer: PiCodeQuestionOffer, ctx: ExtensionContext) => void,
+): void {
+  pi.events?.on(PI_CODE_QUESTION_CHANNEL, (data) => {
+    if (!isPiCodeQuestionOffer(data)) return;
+    const ctx = getContext();
+    if (ctx) handler(data, ctx);
+  });
+}
+
 export interface SessionCompactFailedEvent {
   type: "session_compact_failed";
   reason: "manual" | "threshold" | "overflow";

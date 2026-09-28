@@ -1,9 +1,9 @@
 /**
  * Remote Pi dialog bridge
  * Zones: telegram, pi agent
- * Owns one-shot, exact-target reply matching for host-offered extension dialogs.
+ * Owns one-shot, exact-target replies for host dialogs and typed pi-code questions.
  */
-import type { PiRemoteDialogRequest, PiRemoteDialogResponse } from "./pi.ts";
+import type { PiCodeQuestionOffer, PiRemoteDialogRequest, PiRemoteDialogResponse } from "./pi.ts";
 import type { TelegramTransportStamp } from "./queue.ts";
 import type { TelegramSendMessageBody, TelegramSentMessage } from "./telegram-api.ts";
 import type { TelegramTarget } from "./target.ts";
@@ -42,5 +42,6 @@ export declare function createTelegramRemoteDialogRuntime<TContext>(deps: {
     recordError(error: unknown): void;
 }): {
     offer(event: PiRemoteDialogRequest, ctx: TContext): Promise<PiRemoteDialogResponse>;
+    offerQuestion(event: PiCodeQuestionOffer, ctx: TContext): boolean;
     consume(message: TelegramRemoteDialogReply, ctx: TContext): boolean;
 };
