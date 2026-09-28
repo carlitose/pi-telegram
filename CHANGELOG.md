@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+- `Pi dialog bridge (host-gated)`: Prepared exact-target, one-shot Telegram replies for public Pi select/confirm/input/editor requests. An eligible dialog attempts one non-silent message; failed delivery falls back to the local UI, and stale or duplicate replies are not promoted into model input. Requires an approved and compatible Pi host API plus live acceptance before release.
+
 ## 0.51.6: Connection resume and Workspace recovery hotfix
 
 - `Workspace slot recovery`: Confirmed pressure-retirement deletion invalidates the exact stale active-target record before binding removal. Same-process and successor retries finish a retained `commit-ready` fence without repeating Telegram deletion, preventing exhausted A–Z slots from deadlocking on `protection-changed`. Includes [#305](https://github.com/llblab/pi-telegram/pull/305).

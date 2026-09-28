@@ -614,6 +614,7 @@ export interface TelegramInboundRouteRuntimeDeps<
     ctx: TContext,
   ) => Promise<false | "new" | "edit">;
   inboundHandlerRuntime: TelegramInboundHandlerRuntime<TContext>;
+  consumeRemoteDialogReply?: (message: TMessage, ctx: TContext) => boolean;
   threadStore?: Threads.TelegramTopicTargetStore;
   runWorkspaceOperation?: <T>(
     input: {
@@ -2966,6 +2967,7 @@ export function createTelegramInboundRouteRuntime<
       const assertExecutionCurrent =
         Updates.createTelegramUpdateExecutionFenceGuard(message);
       assertExecutionCurrent();
+      if (deps.consumeRemoteDialogReply?.(message as TMessage, ctx)) return;
       if (typeof message.message_thread_id === "number") {
         await deps.handleTelegramThreadTargetObserved?.(
           {
@@ -3052,6 +3054,7 @@ export function createTelegramInboundRouteRuntime<
       const assertExecutionCurrent =
         Updates.createTelegramUpdateExecutionFenceGuard(message);
       assertExecutionCurrent();
+      if (deps.consumeRemoteDialogReply?.(message as TMessage, ctx)) return;
       if (!deps.threadStore) {
         await textDispatch.handleMessage(message as TMessage, ctx);
         return;

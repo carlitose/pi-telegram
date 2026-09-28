@@ -38,6 +38,7 @@ import * as Queue from "./queue.js";
 import * as Recovery from "./recovery.js";
 import * as Replies from "./replies.js";
 import * as Routing from "./routing.js";
+import * as RemoteDialogs from "./remote-dialogs.js";
 import * as Runtime from "./runtime.js";
 import * as Sections from "./sections.js";
 import * as Skills from "./skills.js";
@@ -511,6 +512,33 @@ export default function (pi) {
         callFollowerApi: telegramBusFollowerClients.callApi,
     });
     const { call: callTelegramApi, callMultipart, deleteWebhook, getUpdates, setMyCommands, sendTypingAction, sendChatAction, sendRecordVoiceAction, sendMessageDraft, sendMessage, sendRichMessage, sendRichMessageDraft, downloadFile: downloadTelegramBridgeFile, editMessageText: editTelegramMessageText, editMessageReplyMarkup: editTelegramMessageReplyMarkup, answerCallbackQuery, answerGuestQuery, deleteMessage: deleteTelegramMessage, prepareTempDir, } = telegramApiRuntime;
+    const remoteDialogs = RemoteDialogs.createTelegramRemoteDialogRuntime({
+        getTarget: proactivePushTargetGetter,
+        getAllowedUserId: configStore.getAllowedUserId,
+        getBotId: getTelegramBotId,
+        getTransportStamp: telegramTransportStampRuntime.getStamp,
+        isTransportStampActive: telegramTransportStampRuntime.isActive,
+        getAuthorityKey() {
+            if (ownsTelegramDirectDelivery()) {
+                const epoch = getCurrentLeaderEpoch();
+                return epoch === undefined ? undefined : `direct:${epoch}`;
+            }
+            if (!telegramBusFollowerRegistrationState.isRegistered())
+                return undefined;
+            const generation = telegramBusFollowerRegistrationState.getGeneration();
+            return generation ? `follower:${generation}` : undefined;
+        },
+        isCurrent(ctx) {
+            return telegramSessionContextStore.isCurrent(ctx) &&
+                Pi.getExtensionContextMode(ctx) === "tui";
+        },
+        getSessionId: Pi.getExtensionContextSessionId,
+        sendMessage,
+        recordMessageOwnership: messageOwnershipRuntime.recordLocal,
+        recordError(error) {
+            recordRuntimeEvent("delivery", error, { phase: "remote-dialog-notice" });
+        },
+    });
     // --- Message Delivery ---
     const sendGuestReply = Replies.createGuestMarkdownReplySender({
         answerGuestQuery,
@@ -899,6 +927,7 @@ export default function (pi) {
         buttonActionStore,
         invokeBoundButtonAction: invokeGenerativeAppBoundButtonAction,
         inboundHandlerRuntime,
+        consumeRemoteDialogReply: remoteDialogs.consume,
         threadStore,
         runWorkspaceOperation: telegramWorkspaceOperationRuntime.run,
         updateStatus,
@@ -1764,4 +1793,5 @@ export default function (pi) {
         updateStatus,
         recordRuntimeEvent,
     });
+    Pi.registerPiRemoteDialogResponder(pi, remoteDialogs.offer);
 }

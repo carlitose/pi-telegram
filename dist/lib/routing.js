@@ -1979,6 +1979,8 @@ export function createTelegramInboundRouteRuntime(deps) {
         handleAuthorizedTelegramMessage: async (message, ctx) => {
             const assertExecutionCurrent = Updates.createTelegramUpdateExecutionFenceGuard(message);
             assertExecutionCurrent();
+            if (deps.consumeRemoteDialogReply?.(message, ctx))
+                return;
             if (typeof message.message_thread_id === "number") {
                 await deps.handleTelegramThreadTargetObserved?.({
                     chatId: message.chat.id,
@@ -2051,6 +2053,8 @@ export function createTelegramInboundRouteRuntime(deps) {
             const operation = async () => {
                 const assertExecutionCurrent = Updates.createTelegramUpdateExecutionFenceGuard(message);
                 assertExecutionCurrent();
+                if (deps.consumeRemoteDialogReply?.(message, ctx))
+                    return;
                 if (!deps.threadStore) {
                     await textDispatch.handleMessage(message, ctx);
                     return;

@@ -45,6 +45,36 @@ export type {
   UIPromptStartEvent,
 };
 
+// Structural view of the proposed host ui_prompt_request event. Keep this adapter
+// until the host PR is released; the installed peer does not export its types yet.
+export type PiRemoteDialogRequest = {
+  type: "ui_prompt_request";
+  requestId: string;
+  sessionId: string;
+  signal: AbortSignal;
+  title: string;
+} & (
+  | { kind: "select"; options: string[] }
+  | { kind: "confirm"; message: string }
+  | { kind: "input"; placeholder?: string }
+  | { kind: "editor"; prefill?: string }
+);
+
+export type PiRemoteDialogResponse =
+  | { action: "pass" }
+  | { action: "handled"; value: string | boolean | undefined };
+
+export function registerPiRemoteDialogResponder(
+  pi: ExtensionAPI,
+  handler: (event: PiRemoteDialogRequest, ctx: ExtensionContext) => Promise<PiRemoteDialogResponse>,
+): void {
+  const register = pi.on.bind(pi) as unknown as (
+    event: "ui_prompt_request",
+    handler: (event: PiRemoteDialogRequest, ctx: ExtensionContext) => Promise<PiRemoteDialogResponse>,
+  ) => void;
+  register("ui_prompt_request", handler);
+}
+
 export interface SessionCompactFailedEvent {
   type: "session_compact_failed";
   reason: "manual" | "threshold" | "overflow";

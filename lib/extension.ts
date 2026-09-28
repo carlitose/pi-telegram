@@ -39,6 +39,7 @@ import * as Queue from "./queue.ts";
 import * as Recovery from "./recovery.ts";
 import * as Replies from "./replies.ts";
 import * as Routing from "./routing.ts";
+import * as RemoteDialogs from "./remote-dialogs.ts";
 import * as Runtime from "./runtime.ts";
 import * as Sections from "./sections.ts";
 import * as Skills from "./skills.ts";
@@ -657,6 +658,32 @@ export default function (pi: Pi.ExtensionAPI) {
     deleteMessage: deleteTelegramMessage,
     prepareTempDir,
   } = telegramApiRuntime;
+  const remoteDialogs = RemoteDialogs.createTelegramRemoteDialogRuntime<Pi.ExtensionContext>({
+    getTarget: proactivePushTargetGetter,
+    getAllowedUserId: configStore.getAllowedUserId,
+    getBotId: getTelegramBotId,
+    getTransportStamp: telegramTransportStampRuntime.getStamp,
+    isTransportStampActive: telegramTransportStampRuntime.isActive,
+    getAuthorityKey() {
+      if (ownsTelegramDirectDelivery()) {
+        const epoch = getCurrentLeaderEpoch();
+        return epoch === undefined ? undefined : `direct:${epoch}`;
+      }
+      if (!telegramBusFollowerRegistrationState.isRegistered()) return undefined;
+      const generation = telegramBusFollowerRegistrationState.getGeneration();
+      return generation ? `follower:${generation}` : undefined;
+    },
+    isCurrent(ctx) {
+      return telegramSessionContextStore.isCurrent(ctx) &&
+        Pi.getExtensionContextMode(ctx) === "tui";
+    },
+    getSessionId: Pi.getExtensionContextSessionId,
+    sendMessage,
+    recordMessageOwnership: messageOwnershipRuntime.recordLocal,
+    recordError(error) {
+      recordRuntimeEvent("delivery", error, { phase: "remote-dialog-notice" });
+    },
+  });
 
   // --- Message Delivery ---
 
@@ -1108,6 +1135,7 @@ export default function (pi: Pi.ExtensionAPI) {
     buttonActionStore,
     invokeBoundButtonAction: invokeGenerativeAppBoundButtonAction,
     inboundHandlerRuntime,
+    consumeRemoteDialogReply: remoteDialogs.consume,
     threadStore,
     runWorkspaceOperation: telegramWorkspaceOperationRuntime.run,
     updateStatus,
@@ -2052,4 +2080,5 @@ export default function (pi: Pi.ExtensionAPI) {
     updateStatus,
     recordRuntimeEvent,
   });
+  Pi.registerPiRemoteDialogResponder(pi, remoteDialogs.offer);
 }

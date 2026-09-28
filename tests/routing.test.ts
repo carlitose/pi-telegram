@@ -223,6 +223,11 @@ test("Routing runtime forwards authorized text messages into prompt queueing", a
     menuActions,
     openQueueMenu: async () => undefined,
     queueMenuCallbackHandler: async () => false,
+    consumeRemoteDialogReply(message) {
+      if (message.reply_to_message?.message_id !== 778801) return false;
+      events.push("remote-dialog-consumed");
+      return true;
+    },
     inboundHandlerRuntime: {
       process: async (files, rawText) => ({
         rawText,
@@ -287,6 +292,13 @@ test("Routing runtime forwards authorized text messages into prompt queueing", a
     "deferred-dispatch",
     "dispatch",
   ]);
+  await routeRuntime.handleUpdate({ message: {
+    message_id: 14, chat: { id: 100, type: "private" },
+    from: { id: 7, is_bot: false }, text: "yes",
+    reply_to_message: { message_id: 778801 },
+  } }, { cwd: "/repo" });
+  assert.equal(events.includes("remote-dialog-consumed"), true);
+  assert.equal(telegramQueueStore.getQueuedItems().length, 1);
   bridgeRuntime.lifecycle.setFoldQueuedPromptsIntoHistory(true);
   await routeRuntime.handleUpdate(
     {

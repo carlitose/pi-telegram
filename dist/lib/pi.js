@@ -4,6 +4,10 @@
  * Owns direct pi SDK imports and exposes narrow bridge-facing helpers/types for the extension composition layer
  */
 import { SettingsManager, } from "@earendil-works/pi-coding-agent";
+export function registerPiRemoteDialogResponder(pi, handler) {
+    const register = pi.on.bind(pi);
+    register("ui_prompt_request", handler);
+}
 function isPiRunMode(value) {
     return (value === "tui" || value === "rpc" || value === "json" || value === "print");
 }
