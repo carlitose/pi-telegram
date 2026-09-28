@@ -224,6 +224,14 @@ export function createTelegramRemoteDialogRuntime<TContext>(deps: {
             ...(target.threadId !== undefined ? { message_thread_id: target.threadId } : {}),
             text, parse_mode: "HTML", link_preview_options: { is_disabled: true },
             disable_notification: false,
+            // A plain Thread message can reference the topic-creation service
+            // message. Ask the client to anchor input to this question instead.
+            reply_markup: {
+              force_reply: true,
+              input_field_placeholder: event.multiSelect
+                ? "Reply to this question: e.g. 1,2 or /cancel"
+                : "Reply to this question: choice, text or /cancel",
+            },
           });
           if (!Number.isSafeInteger(sent.message_id) || sent.message_id <= 0 ||
               !current(event, target, stamp, authority, ctx)) {

@@ -164,6 +164,39 @@ function questionRequest(multiSelect = false, signal = new AbortController().sig
   return { offer, settled, claims: () => Number(claimed), touches: () => touches };
 }
 
+test("question prompts request Telegram's explicit reply interface in classic and Threaded Mode", async () => {
+  for (const target of [{ chatId: 17 }, { chatId: 17, threadId: 31 }]) {
+    const f = fixture({ target });
+    const q = questionRequest(true);
+    assert.equal(f.runtime.offerQuestion(q.offer, context), true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(f.sent[0]?.reply_markup, {
+      force_reply: true,
+      input_field_placeholder: "Reply to this question: e.g. 1,2 or /cancel",
+    });
+    assert.equal(f.sent.length, 1);
+    assert.equal(f.sent[0]?.message_thread_id, "threadId" in target ? target.threadId : undefined);
+    assert.equal(f.runtime.consume(f.incoming("none", { message_thread_id: "threadId" in target ? target.threadId : undefined }), context), true);
+    assert.deepEqual(q.settled, [{ action: "answer", indices: [] }]);
+  }
+});
+
+test("Thread service-message replies stay ordinary input, while the exact question reply settles once", async () => {
+  const f = fixture();
+  const q = questionRequest(true);
+  assert.equal(f.runtime.offerQuestion(q.offer, context), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(f.runtime.consume(f.incoming("1,2", {
+    reply_to_message: { message_id: 31, from: { id: 99 }, forum_topic_created: { name: "Fixture" } },
+  }), context), false);
+  assert.deepEqual(q.settled, []);
+  assert.equal(q.touches(), 0);
+  assert.equal(f.runtime.consume(f.incoming("1,2"), context), true);
+  assert.deepEqual(q.settled, [{ action: "answer", indices: [1, 2] }]);
+  assert.equal(f.runtime.consume(f.incoming("1,2"), context), true);
+  assert.equal(q.settled.length, 1);
+});
+
 test("question offer claims synchronously and sends one exact-target non-silent notice", async () => {
   const f = fixture();
   const q = questionRequest();
@@ -174,6 +207,10 @@ test("question offer claims synchronously and sends one exact-target non-silent 
   assert.equal(f.sent[0]?.chat_id, 17);
   assert.equal(f.sent[0]?.message_thread_id, 31);
   assert.equal(f.sent[0]?.disable_notification, false);
+  assert.deepEqual(f.sent[0]?.reply_markup, {
+    force_reply: true,
+    input_field_placeholder: "Reply to this question: choice, text or /cancel",
+  });
   assert.match(f.sent[0]?.text ?? "", /Pick &lt;one&gt; &amp; explain/);
   assert.match(f.sent[0]?.text ?? "", /first &lt;option&gt;/);
   assert.deepEqual(f.ownership, [{ chatId: 17, messageId: 101, target: { chatId: 17, threadId: 31 } }]);

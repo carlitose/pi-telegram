@@ -16,6 +16,7 @@ import * as Menu from "../lib/menu.ts";
 import * as Model from "../lib/model.ts";
 import * as Outbound from "../lib/outbound.ts";
 import * as Queue from "../lib/queue.ts";
+import * as RemoteDialogs from "../lib/remote-dialogs.ts";
 import * as Routing from "../lib/routing.ts";
 import * as Runtime from "../lib/runtime.ts";
 import * as TextGroups from "../lib/text-groups.ts";
@@ -142,8 +143,23 @@ test("Inbound bus projection owns target authority and local labels", () => {
   );
 });
 
-test("Routing runtime forwards authorized text messages into prompt queueing", async () => {
+test("Routing runtime queues text but settles an exact remote question reply while a tool is busy", async () => {
   const events: string[] = [];
+  const sentQuestions: Array<{ text?: string }> = [];
+  const questionOutcomes: unknown[] = [];
+  const remoteDialogs = RemoteDialogs.createTelegramRemoteDialogRuntime<TestContext>({
+    getTarget: () => ({ chatId: 7, threadId: 31 }),
+    getAllowedUserId: () => 7,
+    getBotId: () => 99,
+    getTransportStamp: () => ({ profile: "fixture", generation: "1" }),
+    isTransportStampActive: (stamp) => stamp.profile === "fixture" && stamp.generation === "1",
+    getAuthorityKey: () => "direct:1",
+    isCurrent: (ctx) => ctx.cwd === "/repo",
+    getSessionId: () => "session-1",
+    async sendMessage(body) { sentQuestions.push(body); return { message_id: 778801 }; },
+    recordMessageOwnership() {},
+    recordError(error) { throw error; },
+  });
   const model: TestModel = { provider: "test", id: "model" };
   const bridgeRuntime = Runtime.createTelegramBridgeRuntime();
   const activeTurnRuntime = Queue.createTelegramActiveTurnStore();
@@ -223,10 +239,10 @@ test("Routing runtime forwards authorized text messages into prompt queueing", a
     menuActions,
     openQueueMenu: async () => undefined,
     queueMenuCallbackHandler: async () => false,
-    consumeRemoteDialogReply(message) {
-      if (message.reply_to_message?.message_id !== 778801) return false;
-      events.push("remote-dialog-consumed");
-      return true;
+    consumeRemoteDialogReply(message, ctx) {
+      const consumed = remoteDialogs.consume(message, ctx);
+      if (consumed) events.push("remote-dialog-consumed");
+      return consumed;
     },
     inboundHandlerRuntime: {
       process: async (files, rawText) => ({
@@ -259,7 +275,7 @@ test("Routing runtime forwards authorized text messages into prompt queueing", a
     sendUserMessage: (message, options) => {
       events.push(`user:${message}:${options?.deliverAs ?? "default"}`);
     },
-    isIdle: () => true,
+    isIdle: () => bridgeRuntime.lifecycle.getActiveToolExecutions() === 0,
     hasPendingMessages: () => false,
     compact: () => undefined,
     recordRuntimeEvent: (category, error) => {
@@ -292,13 +308,31 @@ test("Routing runtime forwards authorized text messages into prompt queueing", a
     "deferred-dispatch",
     "dispatch",
   ]);
-  await routeRuntime.handleUpdate({ message: {
-    message_id: 14, chat: { id: 100, type: "private" },
-    from: { id: 7, is_bot: false }, text: "yes",
-    reply_to_message: { message_id: 778801 },
-  } }, { cwd: "/repo" });
-  assert.equal(events.includes("remote-dialog-consumed"), true);
-  assert.equal(telegramQueueStore.getQueuedItems().length, 1);
+  bridgeRuntime.lifecycle.setActiveToolExecutions(1);
+  const questionAbort = new AbortController();
+  assert.equal(remoteDialogs.offerQuestion({
+    version: 1, requestId: "busy-question", sessionId: "session-1",
+    question: "Choose", options: [{ label: "One" }, { label: "Two" }],
+    multiSelect: true, allowFreeText: false, signal: questionAbort.signal,
+    claim: () => (outcome) => { questionOutcomes.push(outcome); return true; },
+    touch: () => true,
+  }, { cwd: "/repo" }), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(questionOutcomes, []);
+  try {
+    await routeRuntime.handleUpdate({ message: {
+      message_id: 14, chat: { id: 7, type: "private" }, message_thread_id: 31,
+      from: { id: 7, is_bot: false }, text: "1,2",
+      reply_to_message: { message_id: 778801, from: { id: 99, is_bot: true }, text: sentQuestions[0]?.text },
+    } }, { cwd: "/repo" });
+    assert.deepEqual(questionOutcomes, [{ action: "answer", indices: [1, 2] }]);
+    assert.equal(events.includes("remote-dialog-consumed"), true);
+    assert.equal(telegramQueueStore.getQueuedItems().length, 1, "the answer must not become a queued prompt");
+    assert.equal(bridgeRuntime.lifecycle.getActiveToolExecutions(), 1, "reply settlement must not require tool completion");
+  } finally {
+    questionAbort.abort();
+    bridgeRuntime.lifecycle.resetActiveToolExecutions();
+  }
   bridgeRuntime.lifecycle.setFoldQueuedPromptsIntoHistory(true);
   await routeRuntime.handleUpdate(
     {
