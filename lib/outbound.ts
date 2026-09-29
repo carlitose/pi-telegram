@@ -997,13 +997,22 @@ export function createTelegramAssistantOutputSender<
     }
     const mutationFence =
       createTelegramAssistantOutputMutationFence(isAuthorityActive);
+    // Commentary between tool calls is in-turn progress and is sent silently;
+    // final and terminal-partial blocks close the turn and keep notifying.
+    const silent = event.placement === "intermediate";
+    const applyNotificationPolicy = <TBody extends Record<string, unknown>>(
+      body: TBody,
+    ): TBody => (silent ? { ...body, disable_notification: true } : body);
     const replyRuntime = Replies.createTelegramRenderedMessageDeliveryRuntime({
       recordOwnership: deps.recordOwnership,
       sendMessage(body) {
-        return mutationFence.run(deps.sendMessage, body);
+        return mutationFence.run(deps.sendMessage, applyNotificationPolicy(body));
       },
       sendRichMessage(body) {
-        return mutationFence.run(deps.sendRichMessage, body);
+        return mutationFence.run(
+          deps.sendRichMessage,
+          applyNotificationPolicy(body),
+        );
       },
       getAssistantRenderingMode: deps.getAssistantRenderingMode,
       editMessage(body) {

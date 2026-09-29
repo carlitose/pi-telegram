@@ -4,6 +4,7 @@
 
 ## Unreleased
 
+- `Turn notifications`: Messages sent while a run is still working are now silent: thinking and tool activity, including HTML fallback, and intermediate assistant commentary from any source. The final reply, turn errors and aborts, terminal-partial output and remote questions still notify. Content, order, modes and edits are unchanged.
 - `Pi dialog bridge (host-gated)`: Prepared exact-target, one-shot Telegram replies for public Pi select/confirm/input/editor requests. An eligible dialog attempts one non-silent message; failed delivery falls back to the local UI, and stale or duplicate replies are not promoted into model input. Requires an approved and compatible Pi host API plus live acceptance before release.
 
 ## 0.51.6: Connection resume and Workspace recovery hotfix
