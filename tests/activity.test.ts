@@ -973,6 +973,32 @@ for (const rendering of ["rich", "html"] as const) {
   });
 }
 
+for (const rendering of ["rich", "html"] as const) {
+  test(`Assistant ${rendering} projection notifies only for final and terminal-partial segments`, async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const send = createTelegramAssistantOutputSender<string>({
+      sendMessage: async (body) => { bodies.push(body); return { message_id: bodies.length }; },
+      sendRichMessage: async (body) => { bodies.push(body); return { message_id: bodies.length }; },
+      editMessage: async () => "edited", getAssistantRenderingMode: () => rendering,
+      execCommand: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
+    });
+    const authority = {
+      transportStamp: "stamp-1",
+      route: "direct" as const,
+      directEpoch: 1,
+      target: { chatId: 10, threadId: 42 },
+    };
+    const placements = ["intermediate", "final", "terminal-partial"] as const;
+    for (const [index, placement] of placements.entries()) {
+      await send(assistantSegment(index + 1, { placement }), authority, () => true);
+    }
+    assert.deepEqual(
+      bodies.map((body) => body.disable_notification),
+      [true, undefined, undefined],
+    );
+  });
+}
+
 test("Assistant output projection strips foreign comments and skips comment-only segments", async () => {
   const sent: Array<Record<string, unknown>> = [];
   const send = createTelegramAssistantOutputSender<string>({
