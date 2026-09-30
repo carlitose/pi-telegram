@@ -4,7 +4,7 @@
  * Wraps the direct Telegram Bot API runtime so follower instances can route outbound calls through the bus leader
  */
 import { markTelegramBusCrossTargetDelivery, stripTelegramBusApiMetadata, } from "./bus.js";
-import { buildTelegramAnswerGuestQueryBody, isTelegramMessageNotModifiedError, } from "./telegram-api.js";
+import { buildTelegramAnswerGuestQueryBody, buildTelegramMessageReactionBody, isTelegramMessageNotModifiedError, } from "./telegram-api.js";
 function asRecord(value) {
     return value && typeof value === "object" && !Array.isArray(value)
         ? value
@@ -242,6 +242,15 @@ export function createTelegramBusAwareApiRuntime(deps) {
                     chat_id: chatId,
                     message_id: messageId,
                 },
+            ]);
+        },
+        async setMessageReaction(chatId, messageId, emoji) {
+            if (deps.ownsDirect()) {
+                return deps.directRuntime.setMessageReaction(chatId, messageId, emoji);
+            }
+            await deps.callFollowerApi("call", [
+                "setMessageReaction",
+                buildTelegramMessageReactionBody(chatId, messageId, emoji),
             ]);
         },
         prepareTempDir() {

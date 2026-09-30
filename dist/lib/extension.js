@@ -685,7 +685,7 @@ export default function (pi) {
             editMessageText: editTelegramMessageText,
         },
     });
-    const { mutation: queueMutationRuntime, dispatchNext: dispatchNextQueuedTelegramTurn, requestNextDispatchAnnouncement, cancelNextDispatchAnnouncement, watchdog: queueDispatchWatchdogRuntime, } = Bindings.createTelegramQueueBindingRuntime({
+    const { mutation: queueMutationRuntime, dispatchNext: dispatchNextQueuedTelegramTurn, requestNextDispatchAnnouncement, cancelNextDispatchAnnouncement, watchdog: queueDispatchWatchdogRuntime, midRunSteer, } = Bindings.createTelegramQueueBindingRuntime({
         store: telegramQueueStore,
         queue,
         lifecycle,
@@ -699,6 +699,7 @@ export default function (pi) {
         updateStatus,
         sendTextReply,
         sendUserMessage,
+        setMessageReaction: telegramApiRuntime.setMessageReaction,
         reconcileNextDispatchAnnouncementReplyOwnership(item) {
             Replies.preserveTransportReplyDedupOnNextReset(item.chatId, item.replyToMessageId, item.target);
         },
@@ -1765,6 +1766,7 @@ export default function (pi) {
         sendMarkdownReply,
         sendTextReply,
         dispatchNextQueuedTelegramTurn,
+        midRunSteer,
         onPromptHandedOff(turn, ctx) {
             updateAdmissionRuntimeBinding
                 .getSettlement()

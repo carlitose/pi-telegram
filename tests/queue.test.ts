@@ -94,6 +94,10 @@ import {
   type TelegramDispatchRuntimeDeps,
   TELEGRAM_QUEUE_HANDOFF_PAYLOAD_MAX_BYTES,
   type TelegramQueueItem,
+  createTelegramMidRunSteerRuntime,
+  selectTelegramMidRunSteerCandidate,
+  TELEGRAM_MID_RUN_STEER_MAX_IMAGE_BASE64_CHARS,
+  TELEGRAM_MID_RUN_STEER_REACTION_EMOJI,
 } from "../lib/queue.ts";
 
 function createQueueTestModel() {
@@ -6878,4 +6882,373 @@ await test("executeTelegramQueueDispatchPlan sends ready prompts as normal user 
       );
     },
   );
+});
+
+// --- Mid-run steer ---
+
+function createSteerTestTurn(
+  messageId: number,
+  overrides: Partial<PendingTelegramTurn> = {},
+): PendingTelegramTurn {
+  return {
+    kind: "prompt",
+    chatId: 99,
+    target: { chatId: 99 },
+    replyToMessageId: messageId,
+    sourceMessageIds: [messageId],
+    queueOrder: messageId,
+    queueLane: "default",
+    laneOrder: messageId,
+    statusSummary: `turn ${messageId}`,
+    content: [{ type: "text", text: `[telegram] turn ${messageId}` }],
+    historyText: `turn ${messageId}`,
+    queuedAttachments: [],
+    ...overrides,
+  };
+}
+
+function createSteerTestControl(messageId: number): PendingTelegramControlItem<string> {
+  return {
+    kind: "control",
+    controlType: "status",
+    chatId: 99,
+    replyToMessageId: messageId,
+    queueOrder: messageId,
+    queueLane: "control",
+    laneOrder: messageId,
+    statusSummary: "status",
+    execute: async () => {},
+  };
+}
+
+const STEER_TOOL_TURN_END = { message: { role: "assistant", stopReason: "toolUse" } };
+
+type SteerHarnessDeps = Parameters<typeof createTelegramMidRunSteerRuntime<string>>[0];
+
+function createSteerHarness(
+  items: TelegramQueueItem<string>[],
+  overrides: Partial<SteerHarnessDeps> = {},
+) {
+  const events: string[] = [];
+  const state = {
+    queue: [...items],
+    idle: false,
+    compacting: false,
+    dispatchPending: false,
+    piPending: false,
+  };
+  const runtime = createTelegramMidRunSteerRuntime<string>({
+    getQueuedItems: () => state.queue,
+    setQueuedItems: (next) => {
+      state.queue = next;
+      events.push(`queue:${next.map((item) => item.replyToMessageId).join(",")}`);
+    },
+    isIdle: () => state.idle,
+    hasPendingMessages: () => state.piPending,
+    isCompactionInProgress: () => state.compacting,
+    hasDispatchPending: () => state.dispatchPending,
+    commitPromptDispatch: (item) => {
+      events.push(`commit:${item.replyToMessageId}`);
+      return true;
+    },
+    sendUserMessage: (content, options) => {
+      const text = content
+        .map((part) => (part.type === "text" ? part.text : ""))
+        .join("");
+      events.push(`steer:${text}:${options.deliverAs}`);
+      state.piPending = true;
+    },
+    updateStatus: () => {
+      events.push("status");
+    },
+    onInjectionConsumed: async (item) => {
+      events.push(`consumed:${item.replyToMessageId}`);
+    },
+    onInjectionUndelivered: async (item) => {
+      events.push(`undelivered:${item.replyToMessageId}`);
+    },
+    recordRuntimeEvent: (category, _error, details) => {
+      events.push(`event:${category}:${String(details?.phase)}`);
+    },
+    queueWaitMs: 0,
+    ...overrides,
+  });
+  return { runtime, events, state };
+}
+
+async function flushSteerMicrotasks(): Promise<void> {
+  for (let index = 0; index < 5; index += 1) await Promise.resolve();
+}
+
+test("Mid-run steer injects one ready prompt per turn boundary in Priority then Normal order", async () => {
+  const normal = createSteerTestTurn(21);
+  const priority = createSteerTestTurn(22, { queueLane: "priority", laneOrder: 1 });
+  const harness = createSteerHarness([priority, normal]);
+
+  await harness.runtime.onTurnEnd(STEER_TOOL_TURN_END, "ctx");
+  await harness.runtime.onTurnEnd(STEER_TOOL_TURN_END, "ctx");
+
+  assert.deepEqual(harness.events, [
+    "commit:22",
+    "queue:21",
+    "steer:[telegram] turn 22:steer",
+    "status",
+  ]);
+  assert.deepEqual(harness.state.queue, [normal]);
+  assert.equal(harness.runtime.hasPendingInjection(), true);
+});
+
+test("Mid-run steer never injects after aborted or failed turns, while idle, compacting, dispatching, or with Pi pending input", async () => {
+  type SteerState = ReturnType<typeof createSteerHarness>["state"];
+  const blockedCases: Array<[string, (state: SteerState) => void, unknown]> = [
+    ["aborted", () => {}, { message: { role: "assistant", stopReason: "aborted" } }],
+    ["error", () => {}, { message: { role: "assistant", stopReason: "error" } }],
+    ["idle", (state) => { state.idle = true; }, STEER_TOOL_TURN_END],
+    ["compacting", (state) => { state.compacting = true; }, STEER_TOOL_TURN_END],
+    ["dispatch-pending", (state) => { state.dispatchPending = true; }, STEER_TOOL_TURN_END],
+    ["pi-pending", (state) => { state.piPending = true; }, STEER_TOOL_TURN_END],
+  ];
+  for (const [label, arrange, event] of blockedCases) {
+    const harness = createSteerHarness([createSteerTestTurn(21)]);
+    arrange(harness.state);
+    await harness.runtime.onTurnEnd(event, "ctx");
+    assert.deepEqual(harness.events, [], label);
+    assert.equal(harness.state.queue.length, 1, label);
+  }
+});
+
+test("Mid-run steer skips control, suppressed, guest, and inactive work but keeps FIFO behind unready admission", () => {
+  const control = createSteerTestControl(10);
+  const continuation = createSteerTestTurn(11, { queueLane: "control" });
+  const skipped = createSteerTestTurn(12, {
+    queueLane: "priority",
+    reactionSuppressionEmoji: "\u{1F44E}",
+  });
+  const guest = createSteerTestTurn(13, { queueLane: "priority", guestQueryId: "guest-1" });
+  const inactive = createSteerTestTurn(14, { queueLane: "priority" });
+  const ready = createSteerTestTurn(15);
+  const next = createSteerTestTurn(16);
+  const items: TelegramQueueItem<string>[] = [
+    control,
+    continuation,
+    skipped,
+    guest,
+    inactive,
+    ready,
+    next,
+  ];
+  const isQueueItemTransportActive = (item: TelegramQueueItem<string>) =>
+    item !== inactive;
+
+  assert.equal(
+    selectTelegramMidRunSteerCandidate(items, { isQueueItemTransportActive }),
+    ready,
+  );
+  assert.equal(
+    selectTelegramMidRunSteerCandidate(items, {
+      isQueueItemTransportActive,
+      isQueueItemAdmissionReady: (item) => item !== ready,
+    }),
+    undefined,
+  );
+  assert.equal(
+    selectTelegramMidRunSteerCandidate(items, {
+      isQueueItemTransportActive,
+      hasPendingInboundQueueMutationForItem: (item) => item === ready,
+    }),
+    undefined,
+  );
+  assert.equal(
+    selectTelegramMidRunSteerCandidate([control, continuation, skipped], {}),
+    undefined,
+  );
+  const photo = createSteerTestTurn(17, {
+    content: [
+      { type: "text", text: "[telegram] photo" },
+      { type: "image", data: "a".repeat(1024), mimeType: "image/jpeg" },
+    ],
+  });
+  const oversized = createSteerTestTurn(18, {
+    content: [
+      { type: "text", text: "[telegram] scan" },
+      {
+        type: "image",
+        data: "a".repeat(TELEGRAM_MID_RUN_STEER_MAX_IMAGE_BASE64_CHARS + 1),
+        mimeType: "image/png",
+      },
+    ],
+  });
+  assert.equal(selectTelegramMidRunSteerCandidate([photo], {}), photo);
+  assert.equal(
+    selectTelegramMidRunSteerCandidate([oversized, next], {}),
+    undefined,
+  );
+});
+
+test("Mid-run steer closes its injection only on the exact user message and reacts once", async () => {
+  const harness = createSteerHarness([createSteerTestTurn(21)]);
+  await harness.runtime.onTurnEnd(STEER_TOOL_TURN_END, "ctx");
+  harness.events.length = 0;
+
+  assert.equal(harness.runtime.isInjectedInput("[telegram] turn 21"), true);
+  assert.equal(harness.runtime.isInjectedInput("local steer"), false);
+  harness.runtime.onMessageStart({
+    message: { role: "assistant", content: [{ type: "text", text: "[telegram] turn 21" }] },
+  });
+  harness.runtime.onMessageStart({ message: { role: "user", content: "local steer" } });
+  assert.deepEqual(harness.events, []);
+  harness.runtime.onMessageStart({
+    message: {
+      role: "user",
+      content: [
+        { type: "text", text: "[telegram] turn 21" },
+        { type: "image", data: "x", mimeType: "image/png" },
+      ],
+    },
+  });
+  harness.runtime.onMessageStart({ message: { role: "user", content: "[telegram] turn 21" } });
+  await flushSteerMicrotasks();
+  harness.runtime.onAgentSettled("ctx");
+  await flushSteerMicrotasks();
+
+  assert.deepEqual(harness.events, ["consumed:21"]);
+  assert.equal(harness.runtime.hasPendingInjection(), false);
+  assert.equal(harness.runtime.isInjectedInput("[telegram] turn 21"), false);
+  assert.equal(TELEGRAM_MID_RUN_STEER_REACTION_EMOJI, "\u{1F440}");
+});
+
+test("Mid-run steer reports an unconsumed injection at settlement without reinjecting it", async () => {
+  const harness = createSteerHarness([createSteerTestTurn(21)]);
+  await harness.runtime.onTurnEnd(STEER_TOOL_TURN_END, "ctx");
+  harness.events.length = 0;
+
+  harness.runtime.onAgentSettled("ctx");
+  await flushSteerMicrotasks();
+  harness.state.piPending = false;
+  await harness.runtime.onTurnEnd(STEER_TOOL_TURN_END, "ctx");
+
+  assert.deepEqual(harness.events, [
+    "event:dispatch:mid-run-steer-undelivered",
+    "undelivered:21",
+  ]);
+  assert.deepEqual(harness.state.queue, []);
+  assert.equal(harness.runtime.hasPendingInjection(), false);
+});
+
+test("Mid-run steer leaves the prompt queued when durable handoff cannot commit", async () => {
+  const turn = createSteerTestTurn(21);
+  const harness = createSteerHarness([turn], {
+    commitPromptDispatch: () => false,
+  });
+
+  await harness.runtime.onTurnEnd(STEER_TOOL_TURN_END, "ctx");
+
+  assert.deepEqual(harness.events, ["event:dispatch:mid-run-steer-commit"]);
+  assert.deepEqual(harness.state.queue, [turn]);
+  assert.equal(harness.runtime.hasPendingInjection(), false);
+});
+
+test("Mid-run steer waits briefly for Pi to queue the steer before the loop polls", async () => {
+  let queued = false;
+  const harness = createSteerHarness([createSteerTestTurn(21)], {
+    hasPendingMessages: () => queued,
+    sendUserMessage: () => {
+      setTimeout(() => {
+        queued = true;
+      }, 5);
+    },
+    queueWaitMs: 1000,
+  });
+  const startedAt = Date.now();
+  await harness.runtime.onTurnEnd(STEER_TOOL_TURN_END, "ctx");
+  assert.equal(queued, true);
+  assert.ok(Date.now() - startedAt < 900);
+});
+
+test("Mid-run steer reset drops a pending injection without a chat notice", async () => {
+  const harness = createSteerHarness([createSteerTestTurn(21)]);
+  await harness.runtime.onTurnEnd(STEER_TOOL_TURN_END, "ctx");
+  harness.events.length = 0;
+
+  harness.runtime.reset();
+  harness.runtime.onAgentSettled("ctx");
+  await flushSteerMicrotasks();
+
+  assert.deepEqual(harness.events, ["event:dispatch:mid-run-steer-reset"]);
+  assert.equal(harness.runtime.hasPendingInjection(), false);
+});
+
+// --- /later (deferred until idle) ---
+
+test("Prompt enqueue controller marks /later turns to wait for idle dispatch", async () => {
+  let items: TelegramQueueItem<string>[] = [];
+  const controller = createTelegramPromptEnqueueController<number, string>({
+    getQueuedItems: () => items,
+    setQueuedItems: (nextItems) => {
+      items = nextItems;
+    },
+    getFoldQueuedPromptsIntoHistory: () => false,
+    setFoldQueuedPromptsIntoHistory: () => {},
+    hasPendingDispatch: () => false,
+    prepareTurn: async ([message]) => () =>
+      createSteerTestTurn(message ?? 0),
+    updateStatus: () => {},
+    dispatchNextQueuedTelegramTurn: () => {},
+  });
+  await controller.enqueue([31], "ctx", undefined, { deferUntilIdle: true });
+  await controller.enqueue([32], "ctx");
+  assert.deepEqual(
+    items.map((item) => [
+      item.replyToMessageId,
+      item.kind === "prompt" ? item.deferUntilIdle : undefined,
+    ]),
+    [
+      [31, true],
+      [32, undefined],
+    ],
+  );
+});
+
+test("Mid-run steer leaves /later prompts for idle dispatch and injects the prompt behind them", async () => {
+  const later = createSteerTestTurn(21, { deferUntilIdle: true });
+  const normal = createSteerTestTurn(22);
+  assert.equal(selectTelegramMidRunSteerCandidate([later, normal], {}), normal);
+  assert.equal(selectTelegramMidRunSteerCandidate([later], {}), undefined);
+
+  const harness = createSteerHarness([later, normal]);
+  await harness.runtime.onTurnEnd(STEER_TOOL_TURN_END, "ctx");
+  harness.state.piPending = false;
+  await harness.runtime.onTurnEnd(STEER_TOOL_TURN_END, "ctx");
+
+  assert.deepEqual(harness.events, [
+    "commit:22",
+    "queue:21",
+    "steer:[telegram] turn 22:steer",
+    "status",
+  ]);
+  assert.deepEqual(harness.state.queue, [later]);
+});
+
+test("Queue handoff payload preserves the /later marker", () => {
+  const receipt = createTelegramQueueAdmissionReceipt({
+    queueKind: "prompt",
+    scope: "handoff-later",
+    sourceUpdateIds: [1],
+  })!;
+  const prompt = createQueueTestPromptTurn({
+    admissionReceipts: [receipt],
+    deferUntilIdle: true,
+  });
+  const payload = createTelegramQueueHandoffPayload(prompt);
+  assert.equal(payload.kind === "prompt" && payload.deferUntilIdle, true);
+  assert.deepEqual(
+    restoreTelegramQueueHandoffPayload(payload, () =>
+      assert.fail("prompt restore must not request a control execution"),
+    ),
+    prompt,
+  );
+  const plain = createTelegramQueueHandoffPayload(
+    createQueueTestPromptTurn({ admissionReceipts: [receipt] }),
+  );
+  assert.equal("deferUntilIdle" in plain, false);
 });

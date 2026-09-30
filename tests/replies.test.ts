@@ -597,6 +597,28 @@ test("Reply delivery runtime exposes transport and UI/compat rendered-message he
   );
 });
 
+test("Plain text replies can be sent without a notification", async () => {
+  const sent: Array<Record<string, unknown>> = [];
+  const runtime = createTelegramRenderedMessageDeliveryRuntime({
+    renderTelegramMessage: (text) => [{ text }],
+    sendMessage: async (body) => {
+      sent.push(body);
+      return { message_id: sent.length };
+    },
+    editMessage: async () => {},
+    sendRichMessage: async () => ({ message_id: 99 }),
+  });
+  await runtime.sendTextReply(7, 42, "loud");
+  await runtime.sendTextReply(7, 43, "quiet", { disableNotification: true });
+  assert.deepEqual(
+    sent.map((body) => [body.text, body.disable_notification]),
+    [
+      ["loud", undefined],
+      ["quiet", true],
+    ],
+  );
+});
+
 test("Guest replies answer with native Rich Markdown content", async () => {
   const calls: Array<{
     guestQueryId: string;

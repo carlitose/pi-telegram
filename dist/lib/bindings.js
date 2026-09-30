@@ -43,6 +43,18 @@ export function createTelegramQueueBindingRuntime(deps) {
         updateStatus: deps.updateStatus,
         recordRuntimeEvent: deps.recordRuntimeEvent,
     });
+    const isQueueItemTransportActive = (item) => deps.transportStamp.isActive(item.transportStamp);
+    const hasPendingInboundQueueMutationForItem = (item) => deps.admission.hasPendingQueueMutationForItem(item);
+    const isQueueItemAdmissionReady = (item) => deps.admission.getSettlement()?.isItemReady(item) ??
+        (item.admissionReceipts?.length ?? 0) === 0;
+    const commitPromptDispatch = (item, ctx) => {
+        if ((item.admissionReceipts?.length ?? 0) === 0)
+            return true;
+        const settlement = deps.admission.getSettlement();
+        if (!settlement?.onPromptHandedOff)
+            return false;
+        return settlement.onPromptHandedOff(item, ctx) === true;
+    };
     const dispatch = Queue.createTelegramQueueDispatchRuntime({
         ...deps.store,
         isCompactionInProgress: deps.lifecycle.isCompactionInProgress,
@@ -53,24 +65,10 @@ export function createTelegramQueueBindingRuntime(deps) {
         hasDispatchContext: deps.deferredDispatch.isBound,
         getDispatchGeneration: deps.deferredDispatch.getGeneration,
         isDispatchGenerationActive: deps.deferredDispatch.isGenerationActive,
-        isQueueItemTransportActive(item) {
-            return deps.transportStamp.isActive(item.transportStamp);
-        },
-        hasPendingInboundQueueMutationForItem(item) {
-            return deps.admission.hasPendingQueueMutationForItem(item);
-        },
-        isQueueItemAdmissionReady(item) {
-            return (deps.admission.getSettlement()?.isItemReady(item) ??
-                (item.admissionReceipts?.length ?? 0) === 0);
-        },
-        commitPromptDispatch(item, ctx) {
-            if ((item.admissionReceipts?.length ?? 0) === 0)
-                return true;
-            const settlement = deps.admission.getSettlement();
-            if (!settlement?.onPromptHandedOff)
-                return false;
-            return settlement.onPromptHandedOff(item, ctx) === true;
-        },
+        isQueueItemTransportActive,
+        hasPendingInboundQueueMutationForItem,
+        isQueueItemAdmissionReady,
+        commitPromptDispatch,
         onControlSettled(item, ctx) {
             deps.admission.getSettlement()?.onControlSettled(item, ctx);
         },
@@ -92,6 +90,31 @@ export function createTelegramQueueBindingRuntime(deps) {
         watchdog: Queue.createTelegramQueueDispatchWatchdogRuntime({
             hasQueuedItems: deps.store.hasQueuedItems,
             dispatchNextQueuedTelegramTurn: dispatch.dispatchNext,
+            recordRuntimeEvent: deps.recordRuntimeEvent,
+        }),
+        midRunSteer: Queue.createTelegramMidRunSteerRuntime({
+            getQueuedItems: deps.store.getQueuedItems,
+            setQueuedItems: deps.store.setQueuedItems,
+            isIdle: deps.isIdle,
+            hasPendingMessages: deps.hasPendingMessages,
+            isCompactionInProgress: deps.lifecycle.isCompactionInProgress,
+            hasDispatchPending: deps.lifecycle.hasDispatchPending,
+            isQueueItemTransportActive,
+            hasPendingInboundQueueMutationForItem,
+            isQueueItemAdmissionReady,
+            commitPromptDispatch,
+            sendUserMessage: deps.sendUserMessage,
+            updateStatus: deps.updateStatus,
+            async onInjectionConsumed(item) {
+                if (!isQueueItemTransportActive(item))
+                    return;
+                await deps.setMessageReaction?.(item.chatId, item.replyToMessageId, Queue.TELEGRAM_MID_RUN_STEER_REACTION_EMOJI);
+            },
+            async onInjectionUndelivered(item) {
+                if (!isQueueItemTransportActive(item))
+                    return;
+                await deps.sendTextReply(item.chatId, item.replyToMessageId, Queue.TELEGRAM_MID_RUN_STEER_UNDELIVERED_TEXT, { target: item.target, disableNotification: true });
+            },
             recordRuntimeEvent: deps.recordRuntimeEvent,
         }),
     };
@@ -498,7 +521,7 @@ export function registerTelegramCommandsAndTools({ pi, agentDir, configStore, pe
         },
     });
 }
-export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, activityRuntime, activityVerbosityRuntime, assistantOutputRuntime, sessionLifecycleRuntime, configStore, abort, typing, lifecycle, activeTurnRuntime, telegramQueueStore, modelSwitchController, previewRuntime, promptDispatchRuntime, deferredQueueDispatchRuntime, modelContextAvailabilityRuntime, disconnectOnQuit, onSessionStarted, shutdownGenerativeAppLiveSurfaces, resolveAutomaticThreadCleanupEnabled, buttonActionStore, callMultipart, sendChatAction, sendRecordVoiceAction, sendMarkdownReply, sendTextReply, dispatchNextQueuedTelegramTurn, onPromptHandedOff, answerGuestQuery, deleteMessage, sendGuestReply, editGuestReply, stopGuestPlaceholder, preparePreviewDelivery, finalizeMarkdownPreview, proactivePushTargetGetter, getAssistantRenderingMode, recordMessageOwnership, canSendAgentActivity, isSessionContextActive = () => true, isTurnTransportActive, updateStatus, recordRuntimeEvent, }) {
+export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, activityRuntime, activityVerbosityRuntime, assistantOutputRuntime, sessionLifecycleRuntime, configStore, abort, typing, lifecycle, activeTurnRuntime, telegramQueueStore, modelSwitchController, previewRuntime, promptDispatchRuntime, deferredQueueDispatchRuntime, modelContextAvailabilityRuntime, disconnectOnQuit, onSessionStarted, shutdownGenerativeAppLiveSurfaces, resolveAutomaticThreadCleanupEnabled, buttonActionStore, callMultipart, sendChatAction, sendRecordVoiceAction, sendMarkdownReply, sendTextReply, dispatchNextQueuedTelegramTurn, midRunSteer, onPromptHandedOff, answerGuestQuery, deleteMessage, sendGuestReply, editGuestReply, stopGuestPlaceholder, preparePreviewDelivery, finalizeMarkdownPreview, proactivePushTargetGetter, getAssistantRenderingMode, recordMessageOwnership, canSendAgentActivity, isSessionContextActive = () => true, isTurnTransportActive, updateStatus, recordRuntimeEvent, }) {
     const agentEndResetter = Runtime.createTelegramAgentEndResetter({
         abort,
         typing,
@@ -741,9 +764,13 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
         ...sessionLifecycleRuntime,
         ...agentLifecycleHooks,
         onInput(event) {
+            // The bridge's own steer is part of the current run, not a new source.
+            if (midRunSteer?.isInjectedInput(event.text))
+                return;
             activityRuntime.recordInputSource(event.source ?? "unknown");
         },
         async onSessionStart(event, ctx) {
+            midRunSteer?.reset();
             cancelPendingFinalPublication();
             previewRuntime.invalidate();
             assistantOutputRuntime.start();
@@ -756,6 +783,7 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
         async onSessionShutdown(event, ctx) {
             if (!isSessionContextActive(ctx))
                 return;
+            midRunSteer?.reset();
             shutdownGenerativeAppLiveSurfaces?.();
             agentLifecycleHooks.clearRetainedAgentEnd();
             activityRuntime.onSessionShutdown();
@@ -853,9 +881,15 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
             });
             agentLifecycleHooks.onToolExecutionEnd(event, ctx);
         },
+        async onTurnEnd(event, ctx) {
+            if (!isSessionContextActive(ctx))
+                return;
+            await midRunSteer?.onTurnEnd(event, ctx);
+        },
         async onMessageStart(event, ctx) {
             if (!isSessionContextActive(ctx))
                 return;
+            midRunSteer?.onMessageStart(event);
             await messageActivityHooks.onMessageStart(event, ctx);
         },
         async onMessageUpdate(event, ctx) {
@@ -915,6 +949,7 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
         async onAgentSettled(event, ctx) {
             if (!isSessionContextActive(ctx))
                 return;
+            midRunSteer?.onAgentSettled(ctx);
             const pending = pendingFinalPublication;
             try {
                 await agentLifecycleHooks.onAgentSettled(event, ctx);

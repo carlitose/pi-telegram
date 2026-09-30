@@ -10,6 +10,7 @@ import {
 } from "./bus.ts";
 import {
   buildTelegramAnswerGuestQueryBody,
+  buildTelegramMessageReactionBody,
   isTelegramMessageNotModifiedError,
 } from "./telegram-api.ts";
 import type {
@@ -376,6 +377,19 @@ export function createTelegramBusAwareApiRuntime(
           chat_id: chatId,
           message_id: messageId,
         },
+      ]);
+    },
+    async setMessageReaction(
+      chatId: number,
+      messageId: number,
+      emoji: string,
+    ): Promise<void> {
+      if (deps.ownsDirect()) {
+        return deps.directRuntime.setMessageReaction(chatId, messageId, emoji);
+      }
+      await deps.callFollowerApi("call", [
+        "setMessageReaction",
+        buildTelegramMessageReactionBody(chatId, messageId, emoji),
       ]);
     },
     prepareTempDir(): Promise<number> {

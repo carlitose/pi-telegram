@@ -794,6 +794,7 @@ test("Bus contract encodes and parses queue handoff envelopes", () => {
     content: [{ type: "text" as const, text: "handoff prompt" }],
     historyText: "handoff",
     reactionSuppressionEmoji: "👎",
+    deferUntilIdle: true,
   };
   const leaderEnvelope = {
     kind: "leader.offerQueueHandoff" as const,
@@ -858,6 +859,15 @@ test("Bus contract encodes and parses queue handoff envelopes", () => {
       JSON.stringify({
         ...leaderEnvelope,
         payload: { ...payload, reactionSuppressionEmoji: 1 },
+      }),
+    ),
+    undefined,
+  );
+  assert.equal(
+    parseTelegramBusEnvelope(
+      JSON.stringify({
+        ...leaderEnvelope,
+        payload: { ...payload, deferUntilIdle: "yes" },
       }),
     ),
     undefined,
@@ -1244,6 +1254,56 @@ test("Bus follower API allowlist permits owned message markup/edit/delete operat
       follower,
       method: "call",
       args: ["deleteMessage", { chat_id: 100 }],
+    }),
+    false,
+  );
+});
+
+test("Bus follower API allowlist permits consumed-steer reactions only in the follower chat", () => {
+  const follower = {
+    instanceId: "inst-a",
+    connectedAtMs: 1000,
+    lastHeartbeatMs: 1000,
+    target: { chatId: 100, threadId: 42 },
+  };
+  const reaction = [{ type: "emoji", emoji: "👀" }];
+  assert.equal(
+    isTelegramFollowerApiCallAllowed({
+      follower,
+      method: "call",
+      args: ["setMessageReaction", { chat_id: 100, message_id: 9, reaction }],
+    }),
+    true,
+  );
+  assert.equal(
+    isTelegramFollowerApiCallAllowed({
+      follower,
+      method: "call",
+      args: ["setMessageReaction", { chat_id: "100", message_id: "9", reaction }],
+    }),
+    true,
+  );
+  assert.equal(
+    isTelegramFollowerApiCallAllowed({
+      follower,
+      method: "call",
+      args: ["setMessageReaction", { chat_id: 101, message_id: 9, reaction }],
+    }),
+    false,
+  );
+  assert.equal(
+    isTelegramFollowerApiCallAllowed({
+      follower,
+      method: "call",
+      args: ["setMessageReaction", { chat_id: 100, reaction }],
+    }),
+    false,
+  );
+  assert.equal(
+    isTelegramFollowerApiCallAllowed({
+      follower: { ...follower, target: undefined },
+      method: "call",
+      args: ["setMessageReaction", { chat_id: 100, message_id: 9, reaction }],
     }),
     false,
   );

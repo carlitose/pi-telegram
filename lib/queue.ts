@@ -128,6 +128,8 @@ export interface PendingTelegramTurn extends TelegramQueueItemBase {
   reactionSuppressionEmoji?: string;
   /** Emit the explicit aborted-turn notice when /next settles this active turn. */
   announceNextAbortOnEnd?: boolean;
+  /** Queued with /later: waits for idle dispatch and never steers mid-run. */
+  deferUntilIdle?: boolean;
 
   /** Turn should preferably be delivered as voice (mirror mode + user sent voice) */
   voiceReplyPreferred?: boolean;
@@ -174,6 +176,7 @@ export interface TelegramPromptQueueHandoffPayload
   reactionSuppressionEmoji?: string;
   voiceReplyPreferred?: boolean;
   voiceReplyRequired?: boolean;
+  deferUntilIdle?: boolean;
 }
 
 export interface TelegramControlQueueHandoffPayload
@@ -667,6 +670,7 @@ export function createTelegramQueueHandoffPayload<TContext>(
     ...(item.voiceReplyRequired !== undefined
       ? { voiceReplyRequired: item.voiceReplyRequired }
       : {}),
+    ...(item.deferUntilIdle ? { deferUntilIdle: true } : {}),
   });
 }
 
@@ -2419,6 +2423,11 @@ export interface TelegramPromptEnqueueRuntimeDeps<
   dispatchNextQueuedTelegramTurn: () => void;
   assertExecutionCurrent?: () => void;
   onQueued?: (turn: PendingTelegramTurn) => void;
+  deferUntilIdle?: boolean;
+}
+
+export interface TelegramPromptEnqueueOptions {
+  deferUntilIdle?: boolean;
 }
 
 export interface TelegramPromptEnqueueControllerDeps<
@@ -2442,6 +2451,7 @@ export interface TelegramPromptEnqueueController<TMessage, TContext = unknown> {
     messages: TMessage[],
     ctx: TContext,
     onQueued?: (turn: PendingTelegramTurn) => void,
+    options?: TelegramPromptEnqueueOptions,
   ) => Promise<PendingTelegramTurn>;
 }
 
@@ -2820,7 +2830,10 @@ export async function enqueueTelegramPromptTurnRuntime<
     historyTurns.push(item);
     return false;
   });
-  const turn = buildTurn(historyTurns);
+  const builtTurn = buildTurn(historyTurns);
+  const turn = deps.deferUntilIdle
+    ? { ...builtTurn, deferUntilIdle: true }
+    : builtTurn;
   deps.setQueuedItems(appendTelegramQueueItem(remainingItems, turn));
   deps.onQueued?.(turn);
   deps.updateStatus();
@@ -2835,7 +2848,7 @@ export function createTelegramPromptEnqueueController<
   deps: TelegramPromptEnqueueControllerDeps<TMessage, TContext>,
 ): TelegramPromptEnqueueController<TMessage, TContext> {
   return {
-    enqueue: (messages, ctx, onQueued) =>
+    enqueue: (messages, ctx, onQueued, options) =>
       enqueueTelegramPromptTurnRuntime(messages, {
         ...deps,
         prepareTurn: (nextMessages) => deps.prepareTurn(nextMessages, ctx),
@@ -2845,6 +2858,7 @@ export function createTelegramPromptEnqueueController<
         assertExecutionCurrent: () =>
           deps.assertExecutionCurrent?.(messages),
         onQueued,
+        deferUntilIdle: options?.deferUntilIdle,
       }),
   };
 }
@@ -2883,7 +2897,7 @@ export interface TelegramControlRuntimeDeps<
     chatId: number,
     replyToMessageId: number,
     text: string,
-    options?: { target?: TelegramQueueTarget },
+    options?: { target?: TelegramQueueTarget; disableNotification?: boolean },
   ) => Promise<number | undefined>;
   onSettled: (item: PendingTelegramControlItem<TContext>) => void;
 }
@@ -3072,7 +3086,7 @@ export function createTelegramQueueDispatchWatchdogRuntime<TContext = unknown>(
 // --- Dispatch Runtime ---
 
 export interface TelegramPromptDeliveryOptions {
-  deliverAs: "followUp";
+  deliverAs: "steer" | "followUp";
 }
 
 export interface TelegramDispatchRuntimeDeps<TContext = unknown> {
@@ -3470,4 +3484,251 @@ export function createTelegramQueueDispatchController<TContext = unknown>(
     },
   };
   return controller;
+}
+
+// --- Mid-Run Steer Runtime ---
+
+// A busy Pi run absorbs queued Telegram prompts the way the terminal steers:
+// the prompt waits in the bridge queue (still editable and reorderable) until a
+// turn boundary, then enters the same run as a Pi steer message.
+
+export const TELEGRAM_MID_RUN_STEER_REACTION_EMOJI = "\u{1F440}";
+export const TELEGRAM_MID_RUN_STEER_QUEUE_WAIT_MS = 500;
+// Pi normalizes images only for idle prompts, never for steers. Telegram photos
+// stay well below this bound; larger image documents wait for idle dispatch.
+export const TELEGRAM_MID_RUN_STEER_MAX_IMAGE_BASE64_CHARS = 2 * 1024 * 1024;
+export const TELEGRAM_MID_RUN_STEER_UNDELIVERED_TEXT =
+  "\u26A0\uFE0F Not delivered: the agent finished before reading this message. Send it again if it still matters.";
+
+export interface TelegramMidRunSteerCandidateDeps<TContext = unknown> {
+  isQueueItemTransportActive?: (item: TelegramQueueItem<TContext>) => boolean;
+  hasPendingInboundQueueMutationForItem?: (
+    item: TelegramQueueItem<TContext>,
+  ) => boolean;
+  isQueueItemAdmissionReady?: (item: TelegramQueueItem<TContext>) => boolean;
+}
+
+export function canTelegramMidRunSteerContent(
+  content: readonly TelegramPromptContent[],
+): boolean {
+  return content.every(
+    (part) =>
+      part.type !== "image" ||
+      part.data.length <= TELEGRAM_MID_RUN_STEER_MAX_IMAGE_BASE64_CHARS,
+  );
+}
+
+/**
+ * Pick the queued prompt a busy run may absorb at its next turn boundary.
+ * Control-lane work, /later, Skip-suppressed prompts, and guest queries keep
+ * waiting for idle dispatch; an unready or oversized candidate blocks steering
+ * so lanes stay FIFO.
+ */
+export function selectTelegramMidRunSteerCandidate<TContext = unknown>(
+  items: readonly TelegramQueueItem<TContext>[],
+  deps: TelegramMidRunSteerCandidateDeps<TContext>,
+): PendingTelegramTurn | undefined {
+  for (const item of items) {
+    if (item.kind !== "prompt" || item.queueLane === "control") continue;
+    if (
+      item.deferUntilIdle ||
+      item.reactionSuppressionEmoji !== undefined ||
+      item.guestQueryId
+    ) {
+      continue;
+    }
+    if (deps.isQueueItemTransportActive?.(item) === false) continue;
+    if (deps.hasPendingInboundQueueMutationForItem?.(item)) return undefined;
+    if (deps.isQueueItemAdmissionReady?.(item) === false) return undefined;
+    return canTelegramMidRunSteerContent(item.content) ? item : undefined;
+  }
+  return undefined;
+}
+
+export interface TelegramMidRunSteerRuntimeDeps<TContext = unknown>
+  extends TelegramMidRunSteerCandidateDeps<TContext>,
+    TelegramRuntimeEventRecorderPort {
+  getQueuedItems: () => TelegramQueueItem<TContext>[];
+  setQueuedItems: (items: TelegramQueueItem<TContext>[]) => void;
+  isIdle: (ctx: TContext) => boolean;
+  hasPendingMessages: (ctx: TContext) => boolean;
+  isCompactionInProgress: () => boolean;
+  hasDispatchPending: () => boolean;
+  /** Settles durable receipts exactly like an idle prompt handoff. */
+  commitPromptDispatch?: (item: PendingTelegramTurn, ctx: TContext) => boolean;
+  sendUserMessage: (
+    content: PendingTelegramTurn["content"],
+    options: { deliverAs: "steer" },
+  ) => void;
+  updateStatus: (ctx: TContext) => void;
+  onInjectionConsumed?: (item: PendingTelegramTurn) => Promise<void> | void;
+  onInjectionUndelivered?: (item: PendingTelegramTurn) => Promise<void> | void;
+  /** Bounded turn_end hold so Pi queues the steer before its loop polls. */
+  queueWaitMs?: number;
+}
+
+export interface TelegramMidRunSteerRuntime<TContext = unknown> {
+  onTurnEnd: (event: unknown, ctx: TContext) => Promise<void>;
+  onMessageStart: (event: unknown) => void;
+  onAgentSettled: (ctx: TContext) => void;
+  /** True for the Pi input event produced by the pending injection itself. */
+  isInjectedInput: (text: string) => boolean;
+  hasPendingInjection: () => boolean;
+  reset: () => void;
+}
+
+function getTelegramMidRunSteerRecordField(
+  value: unknown,
+  field: string,
+): unknown {
+  if (!value || typeof value !== "object") return undefined;
+  return (value as Record<string, unknown>)[field];
+}
+
+function getTelegramMidRunSteerText(content: unknown): string | undefined {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return undefined;
+  // Pi joins text parts with newlines when it turns content into a steer.
+  return content
+    .filter(
+      (part) =>
+        getTelegramMidRunSteerRecordField(part, "type") === "text" &&
+        typeof getTelegramMidRunSteerRecordField(part, "text") === "string",
+    )
+    .map((part) => getTelegramMidRunSteerRecordField(part, "text") as string)
+    .join("\n");
+}
+
+export function createTelegramMidRunSteerRuntime<TContext = unknown>(
+  deps: TelegramMidRunSteerRuntimeDeps<TContext>,
+): TelegramMidRunSteerRuntime<TContext> {
+  let pending: { item: PendingTelegramTurn; text: string } | undefined;
+  const runSideEffect = (
+    phase: string,
+    effect: () => Promise<void> | void,
+  ): void => {
+    try {
+      void Promise.resolve(effect()).catch((error) => {
+        deps.recordRuntimeEvent?.("delivery", error, { phase });
+      });
+    } catch (error) {
+      deps.recordRuntimeEvent?.("delivery", error, { phase });
+    }
+  };
+  const waitForQueuedSteer = async (
+    ctx: TContext,
+    injection: NonNullable<typeof pending>,
+  ): Promise<void> => {
+    const deadline =
+      Date.now() + (deps.queueWaitMs ?? TELEGRAM_MID_RUN_STEER_QUEUE_WAIT_MS);
+    while (
+      pending === injection &&
+      !deps.hasPendingMessages(ctx) &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+  };
+  return {
+    async onTurnEnd(event, ctx) {
+      if (pending) return;
+      const stopReason = getTelegramMidRunSteerRecordField(
+        getTelegramMidRunSteerRecordField(event, "message"),
+        "stopReason",
+      );
+      if (stopReason === "aborted" || stopReason === "error") return;
+      if (
+        deps.isIdle(ctx) ||
+        deps.isCompactionInProgress() ||
+        deps.hasDispatchPending() ||
+        deps.hasPendingMessages(ctx)
+      ) {
+        return;
+      }
+      const item = selectTelegramMidRunSteerCandidate(
+        deps.getQueuedItems(),
+        deps,
+      );
+      if (!item) return;
+      try {
+        if (deps.commitPromptDispatch && !deps.commitPromptDispatch(item, ctx)) {
+          throw new Error(
+            "Telegram mid-run steer could not be committed durably.",
+          );
+        }
+      } catch (error) {
+        deps.recordRuntimeEvent?.("dispatch", error, {
+          phase: "mid-run-steer-commit",
+        });
+        return;
+      }
+      deps.setQueuedItems(
+        deps.getQueuedItems().filter((queued) => queued !== item),
+      );
+      const injection = {
+        item,
+        text: getTelegramMidRunSteerText(item.content) ?? "",
+      };
+      pending = injection;
+      try {
+        deps.sendUserMessage(item.content, { deliverAs: "steer" });
+      } catch (error) {
+        pending = undefined;
+        deps.recordRuntimeEvent?.("dispatch", error, {
+          phase: "mid-run-steer-send",
+        });
+        runSideEffect("mid-run-steer-undelivered-notice", () =>
+          deps.onInjectionUndelivered?.(item),
+        );
+        deps.updateStatus(ctx);
+        return;
+      }
+      deps.updateStatus(ctx);
+      await waitForQueuedSteer(ctx, injection);
+    },
+    onMessageStart(event) {
+      if (!pending || !pending.text) return;
+      const message = getTelegramMidRunSteerRecordField(event, "message");
+      if (getTelegramMidRunSteerRecordField(message, "role") !== "user") return;
+      const text = getTelegramMidRunSteerText(
+        getTelegramMidRunSteerRecordField(message, "content"),
+      );
+      if (text === undefined || !text.includes(pending.text)) return;
+      const { item } = pending;
+      pending = undefined;
+      runSideEffect("mid-run-steer-reaction", () =>
+        deps.onInjectionConsumed?.(item),
+      );
+    },
+    onAgentSettled() {
+      if (!pending) return;
+      const { item } = pending;
+      pending = undefined;
+      // Never reinject: a steer Pi dropped (for example on abort) may already
+      // sit in the terminal editor, and resending could deliver it twice.
+      deps.recordRuntimeEvent?.(
+        "dispatch",
+        new Error("Telegram mid-run steer was not read before the run settled."),
+        { phase: "mid-run-steer-undelivered" },
+      );
+      runSideEffect("mid-run-steer-undelivered-notice", () =>
+        deps.onInjectionUndelivered?.(item),
+      );
+    },
+    isInjectedInput(text) {
+      return pending !== undefined && pending.text === text;
+    },
+    hasPendingInjection() {
+      return pending !== undefined;
+    },
+    reset() {
+      if (!pending) return;
+      pending = undefined;
+      deps.recordRuntimeEvent?.(
+        "dispatch",
+        new Error("Telegram mid-run steer was dropped by a session reset."),
+        { phase: "mid-run-steer-reset" },
+      );
+    },
+  };
 }

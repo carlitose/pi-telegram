@@ -848,6 +848,9 @@ test("Lifecycle helpers register pi hooks and delegate to handlers", async () =>
     onToolExecutionEnd: () => {
       events.push("tool-end");
     },
+    onTurnEnd: async () => {
+      events.push("turn-end");
+    },
     onMessageStart: async () => {
       events.push("message-start");
     },
@@ -882,6 +885,7 @@ test("Lifecycle helpers register pi hooks and delegate to handlers", async () =>
       "tool_execution_start",
       "tool_execution_update",
       "tool_execution_end",
+      "turn_end",
       "message_start",
       "message_update",
       "message_end",
@@ -928,6 +932,7 @@ test("Lifecycle helpers register pi hooks and delegate to handlers", async () =>
     {},
     ctx,
   );
+  await getRequiredLifecycleHandler(harness.handlers, "turn_end")({}, ctx);
   await getRequiredLifecycleHandler(harness.handlers, "message_start")({}, ctx);
   await getRequiredLifecycleHandler(harness.handlers, "message_update")(
     {},
@@ -956,6 +961,7 @@ test("Lifecycle helpers register pi hooks and delegate to handlers", async () =>
     "tool-start",
     "tool-update",
     "tool-end",
+    "turn-end",
     "message-start",
     "message-update",
     "message-end",

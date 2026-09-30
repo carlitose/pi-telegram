@@ -55,6 +55,7 @@ Stable commands inside the paired Telegram DM:
 - `/compact` — open confirmation and compact when idle.
 - `/next` — abort active work first when needed, attempt the interrupted prompt's abort notice, then reply `Dispatching next queued turn.` to the exact queued prompt selected for the next model turn. That dispatch notice owns the turn's one reply header; later answer messages do not reply to the same prompt again. Abort-notice failure is diagnostic and cannot block dispatch. A later `/abort` or `/stop` cancels both pending transition notices before taking ownership. The `/next` command itself is never the lifecycle-notice reply target, and aborted pending assistant text is suppressed.
 - `/continue` — enqueue a priority `continue` prompt.
+- `/later <message>` — enqueue a normal prompt (text, or a photo/document caption with its attachments) that waits for idle dispatch and is never steered into a running Pi run; bare `/later` replies with usage.
 - `/abort` — abort active work and keep the queue; abort-history is scoped to Telegram-owned active turns.
 - `/stop` — abort active Telegram-owned work and clear waiting Telegram queue items.
 
