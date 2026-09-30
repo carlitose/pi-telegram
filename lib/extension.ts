@@ -862,6 +862,7 @@ export default function (pi: Pi.ExtensionAPI) {
     requestNextDispatchAnnouncement,
     cancelNextDispatchAnnouncement,
     watchdog: queueDispatchWatchdogRuntime,
+    midRunSteer,
   } = Bindings.createTelegramQueueBindingRuntime({
     store: telegramQueueStore,
     queue,
@@ -876,6 +877,7 @@ export default function (pi: Pi.ExtensionAPI) {
     updateStatus,
     sendTextReply,
     sendUserMessage,
+    setMessageReaction: telegramApiRuntime.setMessageReaction,
     reconcileNextDispatchAnnouncementReplyOwnership(item) {
       Replies.preserveTransportReplyDedupOnNextReset(
         item.chatId,
@@ -2050,6 +2052,7 @@ export default function (pi: Pi.ExtensionAPI) {
     sendMarkdownReply,
     sendTextReply,
     dispatchNextQueuedTelegramTurn,
+    midRunSteer,
     onPromptHandedOff(turn, ctx) {
       updateAdmissionRuntimeBinding
         .getSettlement()

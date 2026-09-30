@@ -1249,6 +1249,56 @@ test("Bus follower API allowlist permits owned message markup/edit/delete operat
   );
 });
 
+test("Bus follower API allowlist permits consumed-steer reactions only in the follower chat", () => {
+  const follower = {
+    instanceId: "inst-a",
+    connectedAtMs: 1000,
+    lastHeartbeatMs: 1000,
+    target: { chatId: 100, threadId: 42 },
+  };
+  const reaction = [{ type: "emoji", emoji: "👀" }];
+  assert.equal(
+    isTelegramFollowerApiCallAllowed({
+      follower,
+      method: "call",
+      args: ["setMessageReaction", { chat_id: 100, message_id: 9, reaction }],
+    }),
+    true,
+  );
+  assert.equal(
+    isTelegramFollowerApiCallAllowed({
+      follower,
+      method: "call",
+      args: ["setMessageReaction", { chat_id: "100", message_id: "9", reaction }],
+    }),
+    true,
+  );
+  assert.equal(
+    isTelegramFollowerApiCallAllowed({
+      follower,
+      method: "call",
+      args: ["setMessageReaction", { chat_id: 101, message_id: 9, reaction }],
+    }),
+    false,
+  );
+  assert.equal(
+    isTelegramFollowerApiCallAllowed({
+      follower,
+      method: "call",
+      args: ["setMessageReaction", { chat_id: 100, reaction }],
+    }),
+    false,
+  );
+  assert.equal(
+    isTelegramFollowerApiCallAllowed({
+      follower: { ...follower, target: undefined },
+      method: "call",
+      args: ["setMessageReaction", { chat_id: 100, message_id: 9, reaction }],
+    }),
+    false,
+  );
+});
+
 test("Bus follower API allowlist permits bot command registration", () => {
   const follower = {
     instanceId: "inst-a",

@@ -846,6 +846,12 @@ export interface TelegramBridgeApiRuntime {
     content: TelegramEditGuestInlineMessageContent,
   ) => Promise<void>;
   deleteMessage: (chatId: number, messageId: number) => Promise<void>;
+  /** Replace the bot's own reaction on a message with one emoji. */
+  setMessageReaction: (
+    chatId: number,
+    messageId: number,
+    emoji: string,
+  ) => Promise<void>;
   prepareTempDir: () => Promise<number>;
 }
 
@@ -2195,6 +2201,23 @@ export function createTelegramBridgeApiRuntime(
         chat_id: chatId,
         message_id: messageId,
       }).then(() => {}),
+    setMessageReaction: (chatId, messageId, emoji) =>
+      callRecorded<boolean>(
+        "setMessageReaction",
+        buildTelegramMessageReactionBody(chatId, messageId, emoji),
+      ).then(() => {}),
+  };
+}
+
+export function buildTelegramMessageReactionBody(
+  chatId: number,
+  messageId: number,
+  emoji: string,
+): Record<string, unknown> {
+  return {
+    chat_id: chatId,
+    message_id: messageId,
+    reaction: [{ type: "emoji", emoji }],
   };
 }
 

@@ -349,6 +349,15 @@ export function isTelegramFollowerApiCallAllowed(input) {
             return isBotCommandRegistration(input.args[1]);
         if (apiMethod === "sendChatAction")
             return isTargetChatScoped(input.args[1]);
+        // Reactions carry no message_thread_id; the leader can only scope them to
+        // the follower chat. The reacted message is user-authored, never bot-owned.
+        if (apiMethod === "setMessageReaction") {
+            if (!isTargetChatScoped(input.args[1]))
+                return false;
+            const messageId = input.args[1].message_id;
+            const parsedMessageId = typeof messageId === "number" ? messageId : Number(messageId);
+            return Number.isSafeInteger(parsedMessageId) && parsedMessageId > 0;
+        }
         if (apiMethod === "sendMessage" &&
             isTelegramBusAggregateDelivery(input.args[1])) {
             const body = input.args[1];

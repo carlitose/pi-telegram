@@ -104,6 +104,7 @@ test("Extension entrypoint wires domain bindings into the pi API", () => {
       "tool_execution_start",
       "tool_execution_update",
       "tool_execution_end",
+      "turn_end",
       "message_start",
       "message_update",
       "message_end",

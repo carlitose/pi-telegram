@@ -20,6 +20,7 @@ import {
   type SessionShutdownEvent,
   type SessionStartEvent,
   type SlashCommandInfo,
+  type TurnEndEvent,
   type UIPromptEndEvent,
   type UIPromptStartEvent,
   SettingsManager,
@@ -41,6 +42,7 @@ export type {
   SessionShutdownEvent,
   SessionStartEvent,
   SlashCommandInfo,
+  TurnEndEvent,
   UIPromptEndEvent,
   UIPromptStartEvent,
 };

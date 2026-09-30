@@ -82,8 +82,12 @@ export interface TelegramReplyTargetOptions {
     target?: TelegramTarget;
     replyToMessageId?: number;
 }
+/** Plain rendered chunks only; native Markdown replies always notify. */
+export interface TelegramReplyNotificationOptions {
+    disableNotification?: boolean;
+}
 export interface TelegramReplyTransport<TReplyMarkup> {
-    sendRenderedChunks: (chatId: number, chunks: TelegramRenderedChunk[], options?: TelegramReplyTargetOptions & {
+    sendRenderedChunks: (chatId: number, chunks: TelegramRenderedChunk[], options?: TelegramReplyTargetOptions & TelegramReplyNotificationOptions & {
         replyMarkup?: TReplyMarkup;
     }) => Promise<number | undefined>;
     editRenderedMessage: (chatId: number, messageId: number, chunks: TelegramRenderedChunk[], options?: TelegramReplyTargetOptions & {
@@ -91,13 +95,13 @@ export interface TelegramReplyTransport<TReplyMarkup> {
     }) => Promise<number | undefined>;
 }
 export declare function buildTelegramReplyTransport<TReplyMarkup>(deps: TelegramReplyDeliveryDeps<TReplyMarkup>): TelegramReplyTransport<TReplyMarkup>;
-export declare function sendTelegramRenderedChunks<TReplyMarkup>(chatId: number, chunks: TelegramRenderedChunk[], deps: TelegramReplyDeliveryDeps<TReplyMarkup>, options?: TelegramReplyTargetOptions & {
+export declare function sendTelegramRenderedChunks<TReplyMarkup>(chatId: number, chunks: TelegramRenderedChunk[], deps: TelegramReplyDeliveryDeps<TReplyMarkup>, options?: TelegramReplyTargetOptions & TelegramReplyNotificationOptions & {
     replyMarkup?: TReplyMarkup;
 }): Promise<number | undefined>;
 export declare function editTelegramRenderedMessage<TReplyMarkup>(chatId: number, messageId: number, chunks: TelegramRenderedChunk[], deps: TelegramReplyDeliveryDeps<TReplyMarkup>, options?: TelegramReplyTargetOptions & {
     replyMarkup?: TReplyMarkup;
 }): Promise<number | undefined>;
-export interface TelegramTextReplyOptions extends TelegramReplyTargetOptions {
+export interface TelegramTextReplyOptions extends TelegramReplyTargetOptions, TelegramReplyNotificationOptions {
     parseMode?: "HTML";
 }
 export interface TelegramReplyRuntimeDeps<TReplyMarkup = unknown> {
@@ -106,7 +110,7 @@ export interface TelegramReplyRuntimeDeps<TReplyMarkup = unknown> {
     }) => TelegramRenderedChunk[];
     sendRenderedChunks: (chunks: TelegramRenderedChunk[], options?: {
         replyMarkup?: TReplyMarkup;
-    } & TelegramReplyTargetOptions) => Promise<number | undefined>;
+    } & TelegramReplyTargetOptions & TelegramReplyNotificationOptions) => Promise<number | undefined>;
 }
 export declare function sendTelegramPlainReply(text: string, deps: TelegramReplyRuntimeDeps, options?: TelegramTextReplyOptions): Promise<number | undefined>;
 export declare function normalizeTelegramNativeMarkdown(markdown: string): string;

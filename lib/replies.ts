@@ -273,11 +273,16 @@ export interface TelegramReplyTargetOptions {
   replyToMessageId?: number;
 }
 
+/** Plain rendered chunks only; native Markdown replies always notify. */
+export interface TelegramReplyNotificationOptions {
+  disableNotification?: boolean;
+}
+
 export interface TelegramReplyTransport<TReplyMarkup> {
   sendRenderedChunks: (
     chatId: number,
     chunks: TelegramRenderedChunk[],
-    options?: TelegramReplyTargetOptions & {
+    options?: TelegramReplyTargetOptions & TelegramReplyNotificationOptions & {
       replyMarkup?: TReplyMarkup;
     },
   ) => Promise<number | undefined>;
@@ -312,7 +317,7 @@ export async function sendTelegramRenderedChunks<TReplyMarkup>(
   chatId: number,
   chunks: TelegramRenderedChunk[],
   deps: TelegramReplyDeliveryDeps<TReplyMarkup>,
-  options?: TelegramReplyTargetOptions & {
+  options?: TelegramReplyTargetOptions & TelegramReplyNotificationOptions & {
     replyMarkup?: TReplyMarkup;
   },
 ): Promise<number | undefined> {
@@ -329,6 +334,7 @@ export async function sendTelegramRenderedChunks<TReplyMarkup>(
           index === chunks.length - 1 ? options?.replyMarkup : undefined,
         ...(replyParameters ? { reply_parameters: replyParameters } : {}),
         ...(options?.target ? getTelegramTargetThreadParams(options.target) : {}),
+        ...(options?.disableNotification ? { disable_notification: true } : {}),
       }),
     );
     lastMessageId = sent.message_id;
@@ -370,7 +376,8 @@ export async function editTelegramRenderedMessage<TReplyMarkup>(
   return messageId;
 }
 
-export interface TelegramTextReplyOptions extends TelegramReplyTargetOptions {
+export interface TelegramTextReplyOptions
+  extends TelegramReplyTargetOptions, TelegramReplyNotificationOptions {
   parseMode?: "HTML";
 }
 
@@ -381,7 +388,8 @@ export interface TelegramReplyRuntimeDeps<TReplyMarkup = unknown> {
   ) => TelegramRenderedChunk[];
   sendRenderedChunks: (
     chunks: TelegramRenderedChunk[],
-    options?: { replyMarkup?: TReplyMarkup } & TelegramReplyTargetOptions,
+    options?: { replyMarkup?: TReplyMarkup } & TelegramReplyTargetOptions &
+      TelegramReplyNotificationOptions,
   ) => Promise<number | undefined>;
 }
 
@@ -396,6 +404,7 @@ export async function sendTelegramPlainReply(
   return deps.sendRenderedChunks(chunks, {
     target: options?.target,
     replyToMessageId: options?.replyToMessageId,
+    ...(options?.disableNotification ? { disableNotification: true } : {}),
   });
 }
 
@@ -874,6 +883,9 @@ export function createTelegramRenderedMessageRuntime<TReplyMarkup>(
               target: chunkOptions?.target,
               replyToMessageId:
                 chunkOptions?.replyToMessageId ?? replyToMessageId,
+              ...(chunkOptions?.disableNotification
+                ? { disableNotification: true }
+                : {}),
             }),
         },
         options,
