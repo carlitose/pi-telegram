@@ -180,6 +180,9 @@ export default function (pi) {
         getExternalReservedSlots: function () {
             return workspaceAdmissionRuntime.resolve()?.listReservedSlots() ?? [];
         },
+        getCurrentLeaderEpoch: function () {
+            return lockRuntime.getOwnedLeaderEpoch();
+        },
     });
     runtimeDiagnostics.bindStorage({
         getBotToken: configStore.getBotToken,
