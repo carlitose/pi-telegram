@@ -86,6 +86,8 @@ export interface PendingTelegramTurn extends TelegramQueueItemBase {
     reactionSuppressionEmoji?: string;
     /** Emit the explicit aborted-turn notice when /next settles this active turn. */
     announceNextAbortOnEnd?: boolean;
+    /** Queued with /later: waits for idle dispatch and never steers mid-run. */
+    deferUntilIdle?: boolean;
     /** Turn should preferably be delivered as voice (mirror mode + user sent voice) */
     voiceReplyPreferred?: boolean;
     /** Turn must be delivered as voice (voice mode) */
@@ -122,6 +124,7 @@ export interface TelegramPromptQueueHandoffPayload extends TelegramQueueHandoffB
     reactionSuppressionEmoji?: string;
     voiceReplyPreferred?: boolean;
     voiceReplyRequired?: boolean;
+    deferUntilIdle?: boolean;
 }
 export interface TelegramControlQueueHandoffPayload extends TelegramQueueHandoffBase {
     kind: "control";
@@ -653,6 +656,10 @@ export interface TelegramPromptEnqueueRuntimeDeps<TMessage, TContext = unknown> 
     dispatchNextQueuedTelegramTurn: () => void;
     assertExecutionCurrent?: () => void;
     onQueued?: (turn: PendingTelegramTurn) => void;
+    deferUntilIdle?: boolean;
+}
+export interface TelegramPromptEnqueueOptions {
+    deferUntilIdle?: boolean;
 }
 export interface TelegramPromptEnqueueControllerDeps<TMessage, TContext = unknown> extends TelegramQueueStore<TContext> {
     hasPendingDispatch: () => boolean;
@@ -664,7 +671,7 @@ export interface TelegramPromptEnqueueControllerDeps<TMessage, TContext = unknow
     assertExecutionCurrent?: (messages: TMessage[]) => void;
 }
 export interface TelegramPromptEnqueueController<TMessage, TContext = unknown> {
-    enqueue: (messages: TMessage[], ctx: TContext, onQueued?: (turn: PendingTelegramTurn) => void) => Promise<PendingTelegramTurn>;
+    enqueue: (messages: TMessage[], ctx: TContext, onQueued?: (turn: PendingTelegramTurn) => void, options?: TelegramPromptEnqueueOptions) => Promise<PendingTelegramTurn>;
 }
 export declare function buildTelegramSessionStartState<TModel = unknown>(currentModel: TModel | undefined): TelegramSessionStartState<TModel>;
 export declare function buildTelegramSessionShutdownState<TQueueItem>(): TelegramSessionShutdownState<TQueueItem>;
@@ -792,9 +799,9 @@ export interface TelegramMidRunSteerCandidateDeps<TContext = unknown> {
 export declare function canTelegramMidRunSteerContent(content: readonly TelegramPromptContent[]): boolean;
 /**
  * Pick the queued prompt a busy run may absorb at its next turn boundary.
- * Control-lane work, Skip-suppressed prompts, and guest queries keep waiting
- * for idle dispatch; an unready or oversized candidate blocks steering so
- * lanes stay FIFO.
+ * Control-lane work, /later, Skip-suppressed prompts, and guest queries keep
+ * waiting for idle dispatch; an unready or oversized candidate blocks steering
+ * so lanes stay FIFO.
  */
 export declare function selectTelegramMidRunSteerCandidate<TContext = unknown>(items: readonly TelegramQueueItem<TContext>[], deps: TelegramMidRunSteerCandidateDeps<TContext>): PendingTelegramTurn | undefined;
 export interface TelegramMidRunSteerRuntimeDeps<TContext = unknown> extends TelegramMidRunSteerCandidateDeps<TContext>, TelegramRuntimeEventRecorderPort {

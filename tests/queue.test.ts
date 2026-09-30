@@ -7177,3 +7177,78 @@ test("Mid-run steer reset drops a pending injection without a chat notice", asyn
   assert.deepEqual(harness.events, ["event:dispatch:mid-run-steer-reset"]);
   assert.equal(harness.runtime.hasPendingInjection(), false);
 });
+
+// --- /later (deferred until idle) ---
+
+test("Prompt enqueue controller marks /later turns to wait for idle dispatch", async () => {
+  let items: TelegramQueueItem<string>[] = [];
+  const controller = createTelegramPromptEnqueueController<number, string>({
+    getQueuedItems: () => items,
+    setQueuedItems: (nextItems) => {
+      items = nextItems;
+    },
+    getFoldQueuedPromptsIntoHistory: () => false,
+    setFoldQueuedPromptsIntoHistory: () => {},
+    hasPendingDispatch: () => false,
+    prepareTurn: async ([message]) => () =>
+      createSteerTestTurn(message ?? 0),
+    updateStatus: () => {},
+    dispatchNextQueuedTelegramTurn: () => {},
+  });
+  await controller.enqueue([31], "ctx", undefined, { deferUntilIdle: true });
+  await controller.enqueue([32], "ctx");
+  assert.deepEqual(
+    items.map((item) => [
+      item.replyToMessageId,
+      item.kind === "prompt" ? item.deferUntilIdle : undefined,
+    ]),
+    [
+      [31, true],
+      [32, undefined],
+    ],
+  );
+});
+
+test("Mid-run steer leaves /later prompts for idle dispatch and injects the prompt behind them", async () => {
+  const later = createSteerTestTurn(21, { deferUntilIdle: true });
+  const normal = createSteerTestTurn(22);
+  assert.equal(selectTelegramMidRunSteerCandidate([later, normal], {}), normal);
+  assert.equal(selectTelegramMidRunSteerCandidate([later], {}), undefined);
+
+  const harness = createSteerHarness([later, normal]);
+  await harness.runtime.onTurnEnd(STEER_TOOL_TURN_END, "ctx");
+  harness.state.piPending = false;
+  await harness.runtime.onTurnEnd(STEER_TOOL_TURN_END, "ctx");
+
+  assert.deepEqual(harness.events, [
+    "commit:22",
+    "queue:21",
+    "steer:[telegram] turn 22:steer",
+    "status",
+  ]);
+  assert.deepEqual(harness.state.queue, [later]);
+});
+
+test("Queue handoff payload preserves the /later marker", () => {
+  const receipt = createTelegramQueueAdmissionReceipt({
+    queueKind: "prompt",
+    scope: "handoff-later",
+    sourceUpdateIds: [1],
+  })!;
+  const prompt = createQueueTestPromptTurn({
+    admissionReceipts: [receipt],
+    deferUntilIdle: true,
+  });
+  const payload = createTelegramQueueHandoffPayload(prompt);
+  assert.equal(payload.kind === "prompt" && payload.deferUntilIdle, true);
+  assert.deepEqual(
+    restoreTelegramQueueHandoffPayload(payload, () =>
+      assert.fail("prompt restore must not request a control execution"),
+    ),
+    prompt,
+  );
+  const plain = createTelegramQueueHandoffPayload(
+    createQueueTestPromptTurn({ admissionReceipts: [receipt] }),
+  );
+  assert.equal("deferUntilIdle" in plain, false);
+});

@@ -2760,7 +2760,9 @@ function parseQueueHandoffPayload(
     (value.voiceReplyPreferred !== undefined &&
       typeof value.voiceReplyPreferred !== "boolean") ||
     (value.voiceReplyRequired !== undefined &&
-      typeof value.voiceReplyRequired !== "boolean")
+      typeof value.voiceReplyRequired !== "boolean") ||
+    (value.deferUntilIdle !== undefined &&
+      typeof value.deferUntilIdle !== "boolean")
   ) {
     return undefined;
   }
@@ -2789,6 +2791,7 @@ function parseQueueHandoffPayload(
     ...(typeof value.voiceReplyRequired === "boolean"
       ? { voiceReplyRequired: value.voiceReplyRequired }
       : {}),
+    ...(value.deferUntilIdle === true ? { deferUntilIdle: true } : {}),
   };
 }
 

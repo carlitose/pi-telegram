@@ -128,6 +128,8 @@ export interface PendingTelegramTurn extends TelegramQueueItemBase {
   reactionSuppressionEmoji?: string;
   /** Emit the explicit aborted-turn notice when /next settles this active turn. */
   announceNextAbortOnEnd?: boolean;
+  /** Queued with /later: waits for idle dispatch and never steers mid-run. */
+  deferUntilIdle?: boolean;
 
   /** Turn should preferably be delivered as voice (mirror mode + user sent voice) */
   voiceReplyPreferred?: boolean;
@@ -174,6 +176,7 @@ export interface TelegramPromptQueueHandoffPayload
   reactionSuppressionEmoji?: string;
   voiceReplyPreferred?: boolean;
   voiceReplyRequired?: boolean;
+  deferUntilIdle?: boolean;
 }
 
 export interface TelegramControlQueueHandoffPayload
@@ -667,6 +670,7 @@ export function createTelegramQueueHandoffPayload<TContext>(
     ...(item.voiceReplyRequired !== undefined
       ? { voiceReplyRequired: item.voiceReplyRequired }
       : {}),
+    ...(item.deferUntilIdle ? { deferUntilIdle: true } : {}),
   });
 }
 
@@ -2419,6 +2423,11 @@ export interface TelegramPromptEnqueueRuntimeDeps<
   dispatchNextQueuedTelegramTurn: () => void;
   assertExecutionCurrent?: () => void;
   onQueued?: (turn: PendingTelegramTurn) => void;
+  deferUntilIdle?: boolean;
+}
+
+export interface TelegramPromptEnqueueOptions {
+  deferUntilIdle?: boolean;
 }
 
 export interface TelegramPromptEnqueueControllerDeps<
@@ -2442,6 +2451,7 @@ export interface TelegramPromptEnqueueController<TMessage, TContext = unknown> {
     messages: TMessage[],
     ctx: TContext,
     onQueued?: (turn: PendingTelegramTurn) => void,
+    options?: TelegramPromptEnqueueOptions,
   ) => Promise<PendingTelegramTurn>;
 }
 
@@ -2820,7 +2830,10 @@ export async function enqueueTelegramPromptTurnRuntime<
     historyTurns.push(item);
     return false;
   });
-  const turn = buildTurn(historyTurns);
+  const builtTurn = buildTurn(historyTurns);
+  const turn = deps.deferUntilIdle
+    ? { ...builtTurn, deferUntilIdle: true }
+    : builtTurn;
   deps.setQueuedItems(appendTelegramQueueItem(remainingItems, turn));
   deps.onQueued?.(turn);
   deps.updateStatus();
@@ -2835,7 +2848,7 @@ export function createTelegramPromptEnqueueController<
   deps: TelegramPromptEnqueueControllerDeps<TMessage, TContext>,
 ): TelegramPromptEnqueueController<TMessage, TContext> {
   return {
-    enqueue: (messages, ctx, onQueued) =>
+    enqueue: (messages, ctx, onQueued, options) =>
       enqueueTelegramPromptTurnRuntime(messages, {
         ...deps,
         prepareTurn: (nextMessages) => deps.prepareTurn(nextMessages, ctx),
@@ -2845,6 +2858,7 @@ export function createTelegramPromptEnqueueController<
         assertExecutionCurrent: () =>
           deps.assertExecutionCurrent?.(messages),
         onQueued,
+        deferUntilIdle: options?.deferUntilIdle,
       }),
   };
 }
@@ -3506,9 +3520,9 @@ export function canTelegramMidRunSteerContent(
 
 /**
  * Pick the queued prompt a busy run may absorb at its next turn boundary.
- * Control-lane work, Skip-suppressed prompts, and guest queries keep waiting
- * for idle dispatch; an unready or oversized candidate blocks steering so
- * lanes stay FIFO.
+ * Control-lane work, /later, Skip-suppressed prompts, and guest queries keep
+ * waiting for idle dispatch; an unready or oversized candidate blocks steering
+ * so lanes stay FIFO.
  */
 export function selectTelegramMidRunSteerCandidate<TContext = unknown>(
   items: readonly TelegramQueueItem<TContext>[],
@@ -3516,7 +3530,11 @@ export function selectTelegramMidRunSteerCandidate<TContext = unknown>(
 ): PendingTelegramTurn | undefined {
   for (const item of items) {
     if (item.kind !== "prompt" || item.queueLane === "control") continue;
-    if (item.reactionSuppressionEmoji !== undefined || item.guestQueryId) {
+    if (
+      item.deferUntilIdle ||
+      item.reactionSuppressionEmoji !== undefined ||
+      item.guestQueryId
+    ) {
       continue;
     }
     if (deps.isQueueItemTransportActive?.(item) === false) continue;

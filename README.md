@@ -97,7 +97,7 @@ Enable the optional capabilities the bridge needs in the [@BotFather](https://t.
 ## What It Feels Like
 
 - Start a task in the terminal, walk away, and keep supervising it from your phone.
-- Send another prompt while Pi is busy; it waits in the queue and enters the running work at the next turn boundary, like steering from the terminal. The bot marks it with 👀 once the model reads it.
+- Send another prompt while Pi is busy; it waits in the queue and enters the running work at the next turn boundary, like steering from the terminal. The bot marks it with 👀 once the model reads it. Start it with `/later` (also as a photo or document caption) to keep it waiting until Pi is idle instead.
 - Open `/start` to inspect status, model, thinking, settings, prompt templates, and queue controls.
 - Send voice, images, files, replies, edits, or media groups; the bridge turns them into Pi context.
 - Ask for an artifact; `telegram_attach` returns it before the turn's separate final text, or through explicit direct Telegram delivery.
@@ -170,6 +170,7 @@ Use these in the bot DM.
 | `/compact` | Confirm and run session compaction when safe |
 | `/next` | Dispatch the next queued turn, aborting first if needed |
 | `/continue` | Enqueue a priority continuation prompt |
+| `/later <message>` | Queue a prompt, photo or document caption for when Pi is idle; it never steers into running work |
 | `/abort` | Abort the active run while preserving the queue |
 | `/stop` | Abort the active run and clear waiting Telegram turns |
 
@@ -200,7 +201,7 @@ Named profile identifiers contain only lowercase ASCII letters and digits (maxim
 
 Messages sent while Pi is busy become queued turns. Queue controls let you inspect, prioritize, keep or skip, and dispatch work without touching the terminal.
 
-While a run is working, the next ready queued prompt steers into it at each turn boundary (after a tool batch or model reply), exactly like a terminal steer: one prompt per boundary, Priority before Normal, and the reply continues in the running work. The bot sets a 👀 reaction on your message when the model reads it. If the run ends before reading it, the bot replies silently that it was not delivered and does not resend it. Skipped prompts, guest queries, `/continue` and model-switch continuations, and prompts with large image documents still wait until Pi is idle.
+While a run is working, the next ready queued prompt steers into it at each turn boundary (after a tool batch or model reply), exactly like a terminal steer: one prompt per boundary, Priority before Normal, and the reply continues in the running work. The bot sets a 👀 reaction on your message when the model reads it. If the run ends before reading it, the bot replies silently that it was not delivered and does not resend it. Skipped prompts, `/later` prompts, guest queries, `/continue` and model-switch continuations, and prompts with large image documents still wait until Pi is idle; a normal prompt behind a `/later` prompt can still steer.
 
 Queue policy:
 

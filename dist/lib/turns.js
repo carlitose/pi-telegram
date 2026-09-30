@@ -228,11 +228,16 @@ export function updateQueuedTelegramPromptTurnText(options) {
             return item;
         }
         changed = true;
+        const strip = item.deferUntilIdle
+            ? options.stripDeferredCommand
+            : undefined;
         return updateTelegramPromptTurnText({
             turn: item,
             telegramPrefix: options.telegramPrefix,
-            rawText: options.rawText,
-            statusText: options.statusText,
+            rawText: strip ? strip(options.rawText) : options.rawText,
+            statusText: strip && options.statusText !== undefined
+                ? strip(options.statusText)
+                : options.statusText,
         });
     });
     return { items, changed };
@@ -246,6 +251,7 @@ export function createTelegramQueuedPromptEditRuntime(deps) {
                 telegramPrefix: TELEGRAM_PREFIX,
                 rawText: extractTelegramMessagesPromptText([message]),
                 statusText: extractTelegramMessagesText([message]),
+                stripDeferredCommand: deps.stripDeferredCommand,
             });
             deps.setQueuedItems(items);
             if (changed)

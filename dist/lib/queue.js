@@ -326,6 +326,7 @@ export function createTelegramQueueHandoffPayload(item) {
         ...(item.voiceReplyRequired !== undefined
             ? { voiceReplyRequired: item.voiceReplyRequired }
             : {}),
+        ...(item.deferUntilIdle ? { deferUntilIdle: true } : {}),
     });
 }
 export function restoreTelegramQueueHandoffPayload(payload, createControlExecution) {
@@ -1586,7 +1587,10 @@ export async function enqueueTelegramPromptTurnRuntime(messages, deps) {
         historyTurns.push(item);
         return false;
     });
-    const turn = buildTurn(historyTurns);
+    const builtTurn = buildTurn(historyTurns);
+    const turn = deps.deferUntilIdle
+        ? { ...builtTurn, deferUntilIdle: true }
+        : builtTurn;
     deps.setQueuedItems(appendTelegramQueueItem(remainingItems, turn));
     deps.onQueued?.(turn);
     deps.updateStatus();
@@ -1595,13 +1599,14 @@ export async function enqueueTelegramPromptTurnRuntime(messages, deps) {
 }
 export function createTelegramPromptEnqueueController(deps) {
     return {
-        enqueue: (messages, ctx, onQueued) => enqueueTelegramPromptTurnRuntime(messages, {
+        enqueue: (messages, ctx, onQueued, options) => enqueueTelegramPromptTurnRuntime(messages, {
             ...deps,
             prepareTurn: (nextMessages) => deps.prepareTurn(nextMessages, ctx),
             updateStatus: () => deps.updateStatus(ctx),
             dispatchNextQueuedTelegramTurn: () => deps.dispatchNextQueuedTelegramTurn(ctx),
             assertExecutionCurrent: () => deps.assertExecutionCurrent?.(messages),
             onQueued,
+            deferUntilIdle: options?.deferUntilIdle,
         }),
     };
 }
@@ -2054,15 +2059,17 @@ export function canTelegramMidRunSteerContent(content) {
 }
 /**
  * Pick the queued prompt a busy run may absorb at its next turn boundary.
- * Control-lane work, Skip-suppressed prompts, and guest queries keep waiting
- * for idle dispatch; an unready or oversized candidate blocks steering so
- * lanes stay FIFO.
+ * Control-lane work, /later, Skip-suppressed prompts, and guest queries keep
+ * waiting for idle dispatch; an unready or oversized candidate blocks steering
+ * so lanes stay FIFO.
  */
 export function selectTelegramMidRunSteerCandidate(items, deps) {
     for (const item of items) {
         if (item.kind !== "prompt" || item.queueLane === "control")
             continue;
-        if (item.reactionSuppressionEmoji !== undefined || item.guestQueryId) {
+        if (item.deferUntilIdle ||
+            item.reactionSuppressionEmoji !== undefined ||
+            item.guestQueryId) {
             continue;
         }
         if (deps.isQueueItemTransportActive?.(item) === false)

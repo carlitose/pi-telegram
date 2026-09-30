@@ -6473,6 +6473,149 @@ test(`Extension runtime steers a busy-run Telegram prompt at the next turn bound
 }, 15_000);
 }
 
+test("Extension runtime keeps /later prompts out of a busy run and dispatches them once Pi is idle", async () => {
+  const telegramConfig = await createRuntimeTelegramConfigFixture();
+  const sentMessages: Array<{ content: RuntimeHarnessMessage; options?: unknown }> = [];
+  const busyUpdates = createRuntimeDeferredResponse();
+  const finalUpdates = createRuntimeDeferredResponse();
+  let idle = true;
+  let piPending = false;
+  const { handlers, commands, pi } = createRuntimePiHarness({
+    sendUserMessage: (content, options) => {
+      sentMessages.push({ content, options });
+      if (options) piPending = true;
+    },
+  });
+  let getUpdatesCalls = 0;
+  const restoreFetch = setRuntimeTestFetch(async (input) => {
+    const method = getRuntimeTelegramApiMethod(input);
+    if (method === "deleteWebhook") {
+      return createRuntimeTelegramApiResponse(true);
+    }
+    if (method === "getUpdates") {
+      getUpdatesCalls += 1;
+      if (getUpdatesCalls === 1) {
+        return createRuntimeTelegramApiResponse([
+          {
+            _: "other",
+            update_id: 1,
+            message: {
+              message_id: 20,
+              chat: { id: 99, type: "private" },
+              from: { id: 77, is_bot: false, first_name: "Test" },
+              text: "long task",
+            },
+          },
+        ]);
+      }
+      if (getUpdatesCalls === 2) return busyUpdates.promise;
+      if (getUpdatesCalls === 3) return finalUpdates.promise;
+      throw new DOMException("stop", "AbortError");
+    }
+    if (
+      method === "sendChatAction" ||
+      method === "setMessageReaction" ||
+      method === "sendMessage"
+    ) {
+      return createRuntimeTelegramApiResponse(
+        method === "sendMessage" ? { message_id: 500 } : true,
+      );
+    }
+    throw new Error(`Unexpected Telegram API method: ${method}`);
+  });
+  try {
+    await telegramConfig.write({
+      botToken: "123:abc",
+      allowedUserId: 77,
+      lastUpdateId: 0,
+    });
+    (await getRuntimeTelegramExtension())(pi);
+    const ctx = createRuntimeExtensionContext({
+      isIdle: () => idle,
+      hasPendingMessages: () => piPending,
+    });
+    await handlers.get("session_start")?.({}, ctx);
+    await commands.get("telegram-connect")?.handler("", ctx);
+    await waitForCondition(() => sentMessages.length === 1);
+    idle = false;
+    await handlers.get("agent_start")?.({}, ctx);
+    busyUpdates.resolve(
+      createRuntimeTelegramApiResponse([
+        {
+          _: "other",
+          update_id: 2,
+          message: {
+            message_id: 21,
+            chat: { id: 99, type: "private" },
+            from: { id: 77, is_bot: false, first_name: "Test" },
+            text: "/later summarize the diff afterwards",
+          },
+        },
+        {
+          _: "other",
+          update_id: 3,
+          message: {
+            message_id: 22,
+            chat: { id: 99, type: "private" },
+            from: { id: 77, is_bot: false, first_name: "Test" },
+            text: "also check the logs",
+          },
+        },
+      ]),
+    );
+    await waitForCondition(() => getUpdatesCalls >= 3);
+    await flushMicrotasks(20);
+    assert.equal(sentMessages.length, 1);
+
+    const toolTurnEnd = {
+      message: { role: "assistant", stopReason: "toolUse" },
+      toolResults: [],
+    };
+    const steerDeadline = Date.now() + 5000;
+    while (sentMessages.length === 1 && Date.now() < steerDeadline) {
+      await handlers.get("turn_end")?.(toolTurnEnd, ctx);
+      if (sentMessages.length === 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+    }
+    assert.equal(sentMessages.length, 2);
+    assert.equal(
+      getRuntimeHarnessMessageText(sentMessages[1]!.content),
+      "[telegram] also check the logs",
+    );
+    assert.deepEqual(sentMessages[1]!.options, { deliverAs: "steer" });
+    piPending = false;
+    await handlers.get("message_start")?.(
+      { message: { role: "user", content: sentMessages[1]!.content } },
+      ctx,
+    );
+    for (let index = 0; index < 3; index += 1) {
+      await handlers.get("turn_end")?.(toolTurnEnd, ctx);
+    }
+    assert.equal(sentMessages.length, 2);
+
+    const completion = {
+      role: "assistant",
+      stopReason: "stop",
+      content: [{ type: "text", text: "" }],
+    };
+    idle = true;
+    await handlers.get("agent_end")?.({ messages: [completion] }, ctx);
+    await handlers.get("agent_settled")?.({}, ctx);
+    await waitForCondition(() => sentMessages.length === 3);
+    assert.equal(
+      getRuntimeHarnessMessageText(sentMessages[2]!.content),
+      "[telegram] summarize the diff afterwards",
+    );
+    assert.equal(sentMessages[2]!.options, undefined);
+    finalUpdates.resolve(createRuntimeTelegramApiResponse([]));
+    await handlers.get("session_shutdown")?.({}, ctx);
+  } finally {
+    restoreFetch();
+    await telegramConfig.restore();
+  }
+}, 15_000);
+
 test("Extension runtime clears queued follow-ups after a Telegram stop", async () => {
   const telegramConfig = await createRuntimeTelegramConfigFixture();
   const sentMessages: RuntimeHarnessMessage[] = [];

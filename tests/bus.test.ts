@@ -794,6 +794,7 @@ test("Bus contract encodes and parses queue handoff envelopes", () => {
     content: [{ type: "text" as const, text: "handoff prompt" }],
     historyText: "handoff",
     reactionSuppressionEmoji: "👎",
+    deferUntilIdle: true,
   };
   const leaderEnvelope = {
     kind: "leader.offerQueueHandoff" as const,
@@ -858,6 +859,15 @@ test("Bus contract encodes and parses queue handoff envelopes", () => {
       JSON.stringify({
         ...leaderEnvelope,
         payload: { ...payload, reactionSuppressionEmoji: 1 },
+      }),
+    ),
+    undefined,
+  );
+  assert.equal(
+    parseTelegramBusEnvelope(
+      JSON.stringify({
+        ...leaderEnvelope,
+        payload: { ...payload, deferUntilIdle: "yes" },
       }),
     ),
     undefined,
