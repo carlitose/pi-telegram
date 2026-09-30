@@ -5274,11 +5274,13 @@ test("Extension runtime ignores the retired proactive opt-out while Telegram is 
       },
       ctx,
     );
-    await waitForCondition(() => sentBodies.length === 1);
-    assert.equal(sentBodies[0]?.chat_id, 77);
+    await waitForCondition(() => sentBodies.length === 2);
+    assert.equal(sentBodies[0]?.text, "💻 local request");
+    assert.equal(sentBodies[0]?.disable_notification, true);
+    assert.equal(sentBodies[1]?.chat_id, 77);
     assert.match(
       String(
-        (sentBodies[0]?.rich_message as { markdown?: string } | undefined)
+        (sentBodies[1]?.rich_message as { markdown?: string } | undefined)
           ?.markdown ?? "",
       ),
       /Local \*\*done\*\*/,
@@ -5675,13 +5677,15 @@ test("Extension runtime sends proactive checkpoints and final once in source ord
       },
       ctx,
     );
+    await waitForCondition(() => sentBodies.length === 3);
     await flushMicrotasks(20);
-    assert.equal(sentBodies.length, 2);
+    assert.equal(sentBodies.length, 3);
     assert.deepEqual(
       sentBodies.map((body) => body.chat_id),
-      [77, 77],
+      [77, 77, 77],
     );
-    const sentMarkdown = sentBodies.map(
+    assert.equal(sentBodies[0]?.text, "💻 local request");
+    const sentMarkdown = sentBodies.slice(1).map(
       (body) =>
         (body.rich_message as { markdown?: string } | undefined)?.markdown ?? "",
     );
@@ -7202,6 +7206,62 @@ test("Extension runtime keeps queued turns blocked until compaction settles", as
   }
 });
 
+test("Extension runtime echoes an interactive terminal prompt silently before its projected reply", async () => {
+  const telegramConfig = await createRuntimeTelegramConfigFixture();
+  const committed: Array<{ method: string; text: string; silent: boolean }> = [];
+  const { handlers, commands, pi } = createRuntimePiHarness();
+  const restoreFetch = setRuntimeTestFetch(async (input, init) => {
+    const method = getRuntimeTelegramApiMethod(input);
+    if (method === "deleteWebhook") return createRuntimeTelegramApiResponse(true);
+    if (method === "getUpdates") throw new DOMException("stop", "AbortError");
+    if (method === "sendChatAction") return createRuntimeTelegramApiResponse(true);
+    if (method === "sendMessage" || method === "sendRichMessage") {
+      const body = parseJsonRequestBody(init);
+      committed.push({ method, text: getRuntimeTelegramApiText(body), silent: body?.disable_notification === true });
+      return createRuntimeTelegramApiResponse({ message_id: 100 + committed.length });
+    }
+    throw new Error(`Unexpected Telegram API method: ${method}`);
+  });
+  const ctx = createRuntimeExtensionContext({ cwd: "/repo/local-prompt-echo" });
+  try {
+    await telegramConfig.write({ botToken: "123:abc", allowedUserId: 77, lastUpdateId: 0 });
+    await writeRuntimeTelegramLocks({});
+    (await getRuntimeTelegramExtension())(pi);
+    await handlers.get("session_start")?.({}, ctx);
+    await commands.get("telegram-connect")?.handler("", ctx);
+    await flushMicrotasks(20);
+    await handlers.get("input")?.({ source: "extension", text: "autonomous continuation" }, ctx);
+    await handlers.get("input")?.({ source: "interactive", text: "what changed?" }, ctx);
+    await handlers.get("agent_start")?.({}, ctx);
+    const message = {
+      role: "assistant", stopReason: "stop",
+      content: [{ type: "text", text: "Local answer" }],
+    };
+    await handlers.get("message_update")?.({
+      message, assistantMessageEvent: {
+        type: "text_end", contentIndex: 0, content: "Local answer", partial: message,
+      },
+    }, ctx);
+    await handlers.get("message_update")?.({
+      message, assistantMessageEvent: { type: "done", reason: "stop", message },
+    }, ctx);
+    await handlers.get("message_end")?.({ message }, ctx);
+    await handlers.get("agent_end")?.({ messages: [message] }, ctx);
+    await handlers.get("agent_settled")?.({}, ctx);
+    await waitForCondition(() => committed.length === 2);
+    await flushMicrotasks(20);
+    assert.deepEqual(committed, [
+      { method: "sendMessage", text: "💻 what changed?", silent: true },
+      { method: "sendRichMessage", text: "Local answer", silent: false },
+    ]);
+  } finally {
+    await commands.get("telegram-disconnect")?.handler("", ctx);
+    await handlers.get("session_shutdown")?.({}, ctx);
+    restoreFetch();
+    await telegramConfig.restore();
+  }
+});
+
 test("Extension runtime compaction notices cannot overtake a pending local final delivery", async () => {
   const telegramConfig = await createRuntimeTelegramConfigFixture();
   const committed: string[] = [];
@@ -7258,12 +7318,12 @@ test("Extension runtime compaction notices cannot overtake a pending local final
     await handlers.get("session_compact")?.({}, ctx);
     settled = Promise.resolve(handlers.get("agent_settled")?.({}, ctx));
     await flushMicrotasks(30);
-    assert.deepEqual(committed, []);
+    assert.deepEqual(committed, ["💻 local request"]);
     releaseFinal();
     await settled;
-    await waitForCondition(() => committed.length === 3);
+    await waitForCondition(() => committed.length === 4);
     assert.deepEqual(committed, [
-      "Ordered local final", "**🗜 Compaction started.**", "**✅ Compaction completed.**",
+      "💻 local request", "Ordered local final", "**🗜 Compaction started.**", "**✅ Compaction completed.**",
     ]);
   } finally {
     releaseFinal();

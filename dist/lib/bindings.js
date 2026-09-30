@@ -276,8 +276,23 @@ export function createTelegramAssistantOutputBindingRuntime(deps) {
             });
         },
     });
+    const sendLocalPromptEcho = OutboundHandlers.createTelegramLocalPromptEchoSender(deps.sender);
+    const localPromptEcho = Activity.createTelegramLocalPromptEchoRuntime({
+        ...authority,
+        enqueue: deps.enqueue,
+        async send(echo, admitted, isAuthorityActive) {
+            await deps.waitForActivityIdle?.();
+            if (!isAuthorityActive())
+                return;
+            await sendLocalPromptEcho(echo, admitted, isAuthorityActive);
+        },
+        recordFailure(error) {
+            deps.recordRuntimeEvent("local-prompt-echo", error);
+        },
+    });
     return {
         runtime,
+        localPromptEcho,
         authority,
         observeEvent(event) {
             if (event.type === "assistant-segment")
@@ -333,6 +348,7 @@ export function createTelegramActivityBindingRuntime(deps) {
         },
         activityVerbosityRuntime,
         assistantOutputRuntime: assistantOutputBinding.runtime,
+        localPromptEchoRuntime: assistantOutputBinding.localPromptEcho,
         publicationRuntime: {
             enqueue: publication.enqueue,
             reserve: publication.reserve,
@@ -521,7 +537,7 @@ export function registerTelegramCommandsAndTools({ pi, agentDir, configStore, pe
         },
     });
 }
-export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, activityRuntime, activityVerbosityRuntime, assistantOutputRuntime, sessionLifecycleRuntime, configStore, abort, typing, lifecycle, activeTurnRuntime, telegramQueueStore, modelSwitchController, previewRuntime, promptDispatchRuntime, deferredQueueDispatchRuntime, modelContextAvailabilityRuntime, disconnectOnQuit, onSessionStarted, shutdownGenerativeAppLiveSurfaces, resolveAutomaticThreadCleanupEnabled, buttonActionStore, callMultipart, sendChatAction, sendRecordVoiceAction, sendMarkdownReply, sendTextReply, dispatchNextQueuedTelegramTurn, midRunSteer, onPromptHandedOff, answerGuestQuery, deleteMessage, sendGuestReply, editGuestReply, stopGuestPlaceholder, preparePreviewDelivery, finalizeMarkdownPreview, proactivePushTargetGetter, getAssistantRenderingMode, recordMessageOwnership, canSendAgentActivity, isSessionContextActive = () => true, isTurnTransportActive, updateStatus, recordRuntimeEvent, }) {
+export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, activityRuntime, activityVerbosityRuntime, assistantOutputRuntime, localPromptEchoRuntime, sessionLifecycleRuntime, configStore, abort, typing, lifecycle, activeTurnRuntime, telegramQueueStore, modelSwitchController, previewRuntime, promptDispatchRuntime, deferredQueueDispatchRuntime, modelContextAvailabilityRuntime, disconnectOnQuit, onSessionStarted, shutdownGenerativeAppLiveSurfaces, resolveAutomaticThreadCleanupEnabled, buttonActionStore, callMultipart, sendChatAction, sendRecordVoiceAction, sendMarkdownReply, sendTextReply, dispatchNextQueuedTelegramTurn, midRunSteer, onPromptHandedOff, answerGuestQuery, deleteMessage, sendGuestReply, editGuestReply, stopGuestPlaceholder, preparePreviewDelivery, finalizeMarkdownPreview, proactivePushTargetGetter, getAssistantRenderingMode, recordMessageOwnership, canSendAgentActivity, isSessionContextActive = () => true, isTurnTransportActive, updateStatus, recordRuntimeEvent, }) {
     const agentEndResetter = Runtime.createTelegramAgentEndResetter({
         abort,
         typing,
@@ -768,12 +784,18 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
             if (midRunSteer?.isInjectedInput(event.text))
                 return;
             activityRuntime.recordInputSource(event.source ?? "unknown");
+            localPromptEchoRuntime?.accept({
+                source: event.source ?? "unknown",
+                text: event.text,
+                imageCount: event.images?.length ?? 0,
+            });
         },
         async onSessionStart(event, ctx) {
             midRunSteer?.reset();
             cancelPendingFinalPublication();
             previewRuntime.invalidate();
             assistantOutputRuntime.start();
+            localPromptEchoRuntime?.start();
             activityRuntime.onSessionStart?.();
             activityVerbosityRuntime?.reset();
             modelContextAvailabilityRuntime.reconcile();
@@ -789,6 +811,7 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
             activityRuntime.onSessionShutdown();
             activityVerbosityRuntime?.reset();
             assistantOutputRuntime.stop();
+            localPromptEchoRuntime?.stop();
             observedAutomaticCompaction = false;
             agentWorkActive = false;
             cancelPendingFinalPublication();

@@ -440,6 +440,7 @@ export function createTelegramAgentMessageToolRoutingRuntime(deps: {
 
 export interface TelegramAssistantOutputBindingRuntime<TTransportStamp> {
   runtime: Activity.TelegramAssistantOutputRuntime;
+  localPromptEcho: Activity.TelegramLocalPromptEchoRuntime;
   observeEvent: (event: Activity.TelegramActivityEvent) => void;
   authority: Routing.TelegramAssistantOutputAuthorityRuntime<TTransportStamp>;
 }
@@ -491,8 +492,25 @@ export function createTelegramAssistantOutputBindingRuntime<
       });
     },
   });
+  const sendLocalPromptEcho =
+    OutboundHandlers.createTelegramLocalPromptEchoSender<TTransportStamp>(
+      deps.sender,
+    );
+  const localPromptEcho = Activity.createTelegramLocalPromptEchoRuntime({
+    ...authority,
+    enqueue: deps.enqueue,
+    async send(echo, admitted, isAuthorityActive) {
+      await deps.waitForActivityIdle?.();
+      if (!isAuthorityActive()) return;
+      await sendLocalPromptEcho(echo, admitted, isAuthorityActive);
+    },
+    recordFailure(error) {
+      deps.recordRuntimeEvent("local-prompt-echo", error);
+    },
+  });
   return {
     runtime,
+    localPromptEcho,
     authority,
     observeEvent(event) {
       if (event.type === "assistant-segment") runtime.accept(event);
@@ -515,6 +533,7 @@ export interface TelegramActivityBindingRuntime {
   activityRuntime: Activity.TelegramActivityRuntime;
   activityVerbosityRuntime: ActivityVerbosity.TelegramActivityVerbosityRuntime;
   assistantOutputRuntime: Activity.TelegramAssistantOutputRuntime;
+  localPromptEchoRuntime: Activity.TelegramLocalPromptEchoRuntime;
 }
 
 /** Compose public activity fanout, verbosity, and assistant output ordering. */
@@ -583,6 +602,7 @@ export function createTelegramActivityBindingRuntime<TTransportStamp>(deps: {
     },
     activityVerbosityRuntime,
     assistantOutputRuntime: assistantOutputBinding.runtime,
+    localPromptEchoRuntime: assistantOutputBinding.localPromptEcho,
     publicationRuntime: {
       enqueue: publication.enqueue,
       reserve: publication.reserve,
@@ -879,6 +899,10 @@ interface TelegramLifecycleBindingDeps {
     Activity.TelegramAssistantOutputRuntime,
     "start" | "beginTurn" | "hasAdmittedTelegramIntermediate" | "waitForIdle" | "stop"
   >;
+  localPromptEchoRuntime?: Pick<
+    Activity.TelegramLocalPromptEchoRuntime,
+    "start" | "accept" | "stop"
+  >;
   sessionLifecycleRuntime: Pick<
     Lifecycle.TelegramLifecycleRegistrationDeps,
     "onSessionStart" | "onSessionShutdown" | "onModelSelect"
@@ -983,6 +1007,7 @@ export function registerTelegramLifecycleRuntimeHooks({
   activityRuntime,
   activityVerbosityRuntime,
   assistantOutputRuntime,
+  localPromptEchoRuntime,
   sessionLifecycleRuntime,
   configStore,
   abort,
@@ -1320,12 +1345,18 @@ export function registerTelegramLifecycleRuntimeHooks({
       // The bridge's own steer is part of the current run, not a new source.
       if (midRunSteer?.isInjectedInput(event.text)) return;
       activityRuntime.recordInputSource(event.source ?? "unknown");
+      localPromptEchoRuntime?.accept({
+        source: event.source ?? "unknown",
+        text: event.text,
+        imageCount: event.images?.length ?? 0,
+      });
     },
     async onSessionStart(event, ctx) {
       midRunSteer?.reset();
       cancelPendingFinalPublication();
       previewRuntime.invalidate();
       assistantOutputRuntime.start();
+      localPromptEchoRuntime?.start();
       activityRuntime.onSessionStart?.();
       activityVerbosityRuntime?.reset();
       modelContextAvailabilityRuntime.reconcile();
@@ -1340,6 +1371,7 @@ export function registerTelegramLifecycleRuntimeHooks({
       activityRuntime.onSessionShutdown();
       activityVerbosityRuntime?.reset();
       assistantOutputRuntime.stop();
+      localPromptEchoRuntime?.stop();
       observedAutomaticCompaction = false;
       agentWorkActive = false;
       cancelPendingFinalPublication();

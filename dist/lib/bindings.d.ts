@@ -117,6 +117,7 @@ export declare function createTelegramAgentMessageToolRoutingRuntime(deps: {
 }): TelegramAgentMessageToolRoutingRuntime;
 export interface TelegramAssistantOutputBindingRuntime<TTransportStamp> {
     runtime: Activity.TelegramAssistantOutputRuntime;
+    localPromptEcho: Activity.TelegramLocalPromptEchoRuntime;
     observeEvent: (event: Activity.TelegramActivityEvent) => void;
     authority: Routing.TelegramAssistantOutputAuthorityRuntime<TTransportStamp>;
 }
@@ -151,6 +152,7 @@ export interface TelegramActivityBindingRuntime {
     activityRuntime: Activity.TelegramActivityRuntime;
     activityVerbosityRuntime: ActivityVerbosity.TelegramActivityVerbosityRuntime;
     assistantOutputRuntime: Activity.TelegramAssistantOutputRuntime;
+    localPromptEchoRuntime: Activity.TelegramLocalPromptEchoRuntime;
 }
 /** Compose public activity fanout, verbosity, and assistant output ordering. */
 export declare function createTelegramActivityBindingRuntime<TTransportStamp>(deps: {
@@ -208,6 +210,7 @@ interface TelegramLifecycleBindingDeps {
     activityRuntime: Activity.TelegramActivityRuntime;
     activityVerbosityRuntime?: ActivityVerbosity.TelegramActivityVerbosityRuntime;
     assistantOutputRuntime: Pick<Activity.TelegramAssistantOutputRuntime, "start" | "beginTurn" | "hasAdmittedTelegramIntermediate" | "waitForIdle" | "stop">;
+    localPromptEchoRuntime?: Pick<Activity.TelegramLocalPromptEchoRuntime, "start" | "accept" | "stop">;
     sessionLifecycleRuntime: Pick<Lifecycle.TelegramLifecycleRegistrationDeps, "onSessionStart" | "onSessionShutdown" | "onModelSelect">;
     configStore: Pick<Config.TelegramConfigStore, "get" | "getOutboundHandlers" | "hasBotToken" | "load">;
     abort: Runtime.TelegramRuntimeAbortPort;
@@ -253,5 +256,5 @@ interface TelegramLifecycleBindingDeps {
     updateStatus: TelegramBridgeStatusUpdater;
     recordRuntimeEvent: TelegramRuntimeEventRecorder;
 }
-export declare function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, activityRuntime, activityVerbosityRuntime, assistantOutputRuntime, sessionLifecycleRuntime, configStore, abort, typing, lifecycle, activeTurnRuntime, telegramQueueStore, modelSwitchController, previewRuntime, promptDispatchRuntime, deferredQueueDispatchRuntime, modelContextAvailabilityRuntime, disconnectOnQuit, onSessionStarted, shutdownGenerativeAppLiveSurfaces, resolveAutomaticThreadCleanupEnabled, buttonActionStore, callMultipart, sendChatAction, sendRecordVoiceAction, sendMarkdownReply, sendTextReply, dispatchNextQueuedTelegramTurn, midRunSteer, onPromptHandedOff, answerGuestQuery, deleteMessage, sendGuestReply, editGuestReply, stopGuestPlaceholder, preparePreviewDelivery, finalizeMarkdownPreview, proactivePushTargetGetter, getAssistantRenderingMode, recordMessageOwnership, canSendAgentActivity, isSessionContextActive, isTurnTransportActive, updateStatus, recordRuntimeEvent, }: TelegramLifecycleBindingDeps): void;
+export declare function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, activityRuntime, activityVerbosityRuntime, assistantOutputRuntime, localPromptEchoRuntime, sessionLifecycleRuntime, configStore, abort, typing, lifecycle, activeTurnRuntime, telegramQueueStore, modelSwitchController, previewRuntime, promptDispatchRuntime, deferredQueueDispatchRuntime, modelContextAvailabilityRuntime, disconnectOnQuit, onSessionStarted, shutdownGenerativeAppLiveSurfaces, resolveAutomaticThreadCleanupEnabled, buttonActionStore, callMultipart, sendChatAction, sendRecordVoiceAction, sendMarkdownReply, sendTextReply, dispatchNextQueuedTelegramTurn, midRunSteer, onPromptHandedOff, answerGuestQuery, deleteMessage, sendGuestReply, editGuestReply, stopGuestPlaceholder, preparePreviewDelivery, finalizeMarkdownPreview, proactivePushTargetGetter, getAssistantRenderingMode, recordMessageOwnership, canSendAgentActivity, isSessionContextActive, isTurnTransportActive, updateStatus, recordRuntimeEvent, }: TelegramLifecycleBindingDeps): void;
 export {};
