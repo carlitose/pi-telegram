@@ -36,6 +36,7 @@ Use emoji as stable semantic markers, not decoration. Emoji carry transportable 
 | `🔬` | Activity / technical detail | Activity settings row and detail card | Chooses quiet, thinking, tools, or verbose bridge activity; not a generic diagnostics marker. |
 | `🧠` | Model thinking controls | Thinking menus and status rows | Thinking activity quotes omit this icon and their header entirely to minimize chat height. |
 | `📎` | Attachment | Attachment summaries, queue rows for attachment-only turns | Not for thread binding. |
+| `💻` | Local terminal prompt | Companion echo of a prompt typed at the terminal | Prefixes literal plain text sent silently; attachments are counted as `📎 ×N`. Not for Telegram-originated prompts. |
 | `👁` | Read-only inspection | State/detail viewers and inspection entrypoints | Opens evidence without mutating the inspected object; do not use for edit or refresh actions. |
 
 ### Command And Control Actions

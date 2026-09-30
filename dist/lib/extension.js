@@ -647,7 +647,7 @@ export default function (pi) {
         recordRuntimeEvent,
         ...replyTransport,
     });
-    const { activityRuntime, activityVerbosityRuntime, assistantOutputRuntime, publicationRuntime, } = Bindings.createTelegramActivityBindingRuntime({
+    const { activityRuntime, activityVerbosityRuntime, assistantOutputRuntime, localPromptEchoRuntime, publicationRuntime, } = Bindings.createTelegramActivityBindingRuntime({
         generation: deliveryGenerationSeed,
         assistantOutput: {
             prepareTelegramPreview: previewRuntime.preparePublication,
@@ -1741,6 +1741,7 @@ export default function (pi) {
         activityRuntime,
         activityVerbosityRuntime,
         assistantOutputRuntime,
+        localPromptEchoRuntime,
         publicationRuntime,
         configStore,
         abort,

@@ -584,3 +584,53 @@ export function createTelegramAssistantOutputRuntime(deps) {
         },
     };
 }
+/**
+ * Admit what the operator typed at the terminal into the companion projection.
+ * Only `interactive` input is echoed: extension-injected prompts (including the
+ * bridge's own Telegram turns and steers) and RPC clients are not the operator
+ * typing. Echoes join the shared publication order ahead of the reply they cause
+ * and revalidate the same exact authority before sending.
+ */
+export function createTelegramLocalPromptEchoRuntime(deps) {
+    let generation = 0;
+    let running = false;
+    let tail = Promise.resolve();
+    return {
+        start() {
+            generation += 1;
+            running = true;
+            tail = Promise.resolve();
+        },
+        accept(input) {
+            if (!running || input.source !== "interactive")
+                return;
+            const echo = { text: input.text?.trim() ?? "", imageCount: input.imageCount };
+            if (!echo.text && echo.imageCount <= 0)
+                return;
+            const admittedGeneration = generation;
+            const admittedAuthority = deps.captureAuthority?.();
+            const isAdmittedAuthorityActive = () => running &&
+                generation === admittedGeneration &&
+                (deps.isAuthorityActive === undefined ||
+                    deps.isAuthorityActive(admittedAuthority));
+            const enqueue = deps.enqueue ?? ((task) => tail.then(task));
+            tail = enqueue(async () => {
+                if (!isAdmittedAuthorityActive() || !deps.canDeliver())
+                    return;
+                try {
+                    await deps.send(echo, admittedAuthority, isAdmittedAuthorityActive);
+                }
+                catch (error) {
+                    deps.recordFailure?.(error);
+                }
+            });
+        },
+        waitForIdle() {
+            return tail;
+        },
+        stop() {
+            generation += 1;
+            running = false;
+        },
+    };
+}
