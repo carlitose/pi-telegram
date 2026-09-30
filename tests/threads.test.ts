@@ -5128,3 +5128,132 @@ test("Thread store persists only current state statuses", async () => {
     await rm(dir, { force: true, recursive: true });
   }
 });
+
+// A displaced leader's creation intent that never obtained a topic can no longer gain one.
+const ORPHANED_PROVISION_TTL_MS = 30 * 60 * 1000;
+
+function createOrphanedCreationIntent(
+  overrides: Partial<Parameters<ReturnType<typeof createTelegramTopicTargetStore>["upsertPendingProvision"]>[0]> = {},
+): Parameters<ReturnType<typeof createTelegramTopicTargetStore>["upsertPendingProvision"]>[0] {
+  return {
+    id: "provision:old:1:K:1000",
+    owner: "leader",
+    instanceId: "old:1",
+    profileKey: "cwd:/repo",
+    threadName: "Kodiak",
+    displayTitle: "K",
+    slot: "K",
+    startedAtMs: 1000,
+    leaderEpoch: "epoch-old",
+    ...overrides,
+  };
+}
+
+test("Thread store frees a Workspace slot held by an orphaned creation intent of a displaced leader", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-telegram-orphaned-provision-"));
+  const path = join(dir, "state.json");
+  try {
+    const identity = createTelegramWorkspaceBindingIdentity("/repo", 0, "session-k")!;
+    const displaced = createTelegramTopicTargetStore({ path, getNowMs: () => 1000 });
+    displaced.upsertWorkspaceBinding({ ...identity, target: { chatId: 7, threadId: 126811 },
+      slot: "K", threadName: "Kodiak", updatedAtMs: 1 });
+    displaced.upsertPendingProvision(createOrphanedCreationIntent({ workspaceBindingKey: identity.bindingKey }));
+    await displaced.persist();
+
+    const leader = createTelegramTopicTargetStore({
+      path,
+      getNowMs: () => 1000 + ORPHANED_PROVISION_TTL_MS,
+      getCurrentLeaderEpoch: () => "epoch-new",
+    });
+    await leader.load();
+    const claimed = leader.claimWorkspaceIdentity("/repo", "old:1", undefined, { sessionId: "session-k" });
+    assert.equal(claimed?.slot, "K");
+    assert.equal(leader.allocateSlot("manual:old:1", "K", identity.bindingKey), "K");
+    assert.deepEqual(leader.listPendingProvisions(), []);
+    await leader.persist();
+    const disk = JSON.parse(await readFile(path, "utf8"));
+    assert.deepEqual(disk.pendingProvisions ?? [], []);
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+});
+
+test("Thread provisioner creates the session topic past an orphaned intent of a displaced leader", async () => {
+  const calls: string[] = [];
+  const store = createTelegramTopicTargetStore({
+    path: "/tmp/unused-telegram-targets.json",
+    getNowMs: () => 1000 + ORPHANED_PROVISION_TTL_MS,
+    getCurrentLeaderEpoch: () => "epoch-new",
+  });
+  store.upsertPendingProvision(createOrphanedCreationIntent());
+  const provision = createTelegramTopicTargetProvisioner({
+    topicChatId: -1001,
+    store,
+    getNowMs: () => 1000 + ORPHANED_PROVISION_TTL_MS,
+    getCurrentLeaderEpoch: () => "epoch-new",
+    async callApi<TResponse>(method: string) {
+      calls.push(method);
+      return { message_thread_id: 99 } as TResponse;
+    },
+  });
+  const result = await provision({ instanceId: "new:1", profileKey: "cwd:/repo", threadName: "repo" });
+  assert.deepEqual(result.target, { chatId: -1001, threadId: 99 });
+  assert.deepEqual(calls, ["createForumTopic"]);
+});
+
+test("Thread store keeps protecting creation intents that may still gain a topic", () => {
+  const cases: Array<{
+    name: string;
+    overrides?: Parameters<typeof createOrphanedCreationIntent>[0];
+    nowMs?: number;
+    epoch?: string;
+  }> = [
+    { name: "the live leader's own intent", epoch: "epoch-old" },
+    { name: "an intent younger than the orphan bound", nowMs: 1000 + ORPHANED_PROVISION_TTL_MS - 1 },
+    { name: "an intent carrying recovery evidence", overrides: { target: { chatId: 7, threadId: 55 } } },
+    { name: "an ambiguous create", overrides: { status: "ambiguous" } },
+    { name: "an intent without leader epoch", overrides: { leaderEpoch: undefined } },
+    { name: "any intent while the current epoch is unknown", epoch: undefined },
+  ];
+  for (const { name, overrides, nowMs = 1000 + ORPHANED_PROVISION_TTL_MS, epoch = "epoch-new" } of cases) {
+    const store = createTelegramTopicTargetStore({
+      path: "/tmp/unused-telegram-targets.json",
+      getNowMs: () => nowMs,
+      getCurrentLeaderEpoch: () => (name.includes("unknown") ? undefined : epoch),
+    });
+    store.upsertPendingProvision(createOrphanedCreationIntent(overrides));
+    assert.notEqual(store.allocateSlot("cwd:/other", "K"), "K", name);
+    assert.equal(store.listPendingProvisions().length, 1, name);
+  }
+
+  const orphaned = createTelegramTopicTargetStore({
+    path: "/tmp/unused-telegram-targets.json",
+    getNowMs: () => 1000 + ORPHANED_PROVISION_TTL_MS,
+    getCurrentLeaderEpoch: () => "epoch-new",
+  });
+  orphaned.upsertPendingProvision(createOrphanedCreationIntent());
+  assert.equal(orphaned.allocateSlot("cwd:/other", "K"), "K");
+});
+
+test("Thread store reads the leader epoch only for orphan candidates", () => {
+  let epochReads = 0;
+  let nowMs = 1000;
+  const store = createTelegramTopicTargetStore({
+    path: "/tmp/unused-telegram-targets.json",
+    getNowMs: () => nowMs,
+    getCurrentLeaderEpoch: () => {
+      epochReads += 1;
+      return "epoch-new";
+    },
+  });
+  store.upsertPendingProvision(createOrphanedCreationIntent());
+  store.upsertPendingProvision(createOrphanedCreationIntent({
+    id: "provision:old:1:L:1000", slot: "L", target: { chatId: 7, threadId: 55 },
+  }));
+  store.listPendingProvisions();
+  store.allocateSlot("cwd:/other", "K");
+  assert.equal(epochReads, 0, "a young or targeted intent needs no epoch");
+  nowMs = 1000 + ORPHANED_PROVISION_TTL_MS;
+  assert.deepEqual(store.listPendingProvisions().map((provision) => provision.slot), ["L"]);
+  assert.ok(epochReads > 0);
+});

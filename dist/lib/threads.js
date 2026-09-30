@@ -1051,7 +1051,30 @@ export function isSameTelegramProcessInstance(left, right) {
     const leftProcess = getInstanceProcessKey(left);
     return !!leftProcess && leftProcess === getInstanceProcessKey(right);
 }
-function isPendingProvisionLiveOrTargeted(provision, nowMs) {
+/**
+ * A displaced leader's `createForumTopic` is one request that is not retried. Undici's
+ * default header and body timeouts are 300 s each, and there is at most one IPv4 fallback,
+ * so the request ends well within this bound. Only the https path with a forced network
+ * family has no proven limit.
+ */
+export const TELEGRAM_THREAD_ORPHANED_PROVISION_TTL_MS = 30 * 60 * 1000;
+/**
+ * An intent is orphaned when it has no target, is not ambiguous, carries a leader epoch that
+ * is no longer current, and is older than the orphan bound. It can never gain a topic: the
+ * displaced provisioner is fenced, and there is no recovery evidence to adopt. The live
+ * leader's own intents never qualify, so they still cannot expire into a duplicate create.
+ * The epoch is read last, because it comes from the lock file.
+ */
+export function isTelegramPendingProvisionOrphaned(provision, nowMs, getCurrentLeaderEpoch) {
+    if (provision.target || provision.status === "ambiguous" ||
+        provision.leaderEpoch === undefined || !Number.isFinite(provision.startedAtMs) ||
+        nowMs - provision.startedAtMs < TELEGRAM_THREAD_ORPHANED_PROVISION_TTL_MS) {
+        return false;
+    }
+    const currentLeaderEpoch = getCurrentLeaderEpoch();
+    return currentLeaderEpoch !== undefined && provision.leaderEpoch !== currentLeaderEpoch;
+}
+function isPendingProvisionUnexpiredOrTargeted(provision, nowMs) {
     if (provision.status === "ambiguous")
         return true;
     if (provision.expiresAtMs === undefined || provision.expiresAtMs > nowMs) {
@@ -1074,6 +1097,19 @@ export function createTelegramTopicTargetStore(options) {
             return undefined;
         }
     };
+    const captureCurrentLeaderEpoch = () => {
+        try {
+            return options.getCurrentLeaderEpoch?.();
+        }
+        catch {
+            return undefined;
+        }
+    };
+    const isPendingProvisionOrphaned = (provision, nowMs) => isTelegramPendingProvisionOrphaned(provision, nowMs, captureCurrentLeaderEpoch);
+    // Every store liveness check shares this rule: an orphaned intent neither protects its
+    // slot nor blocks provisioning, and the next persist prunes it.
+    const isPendingProvisionLiveOrTargeted = (provision, nowMs) => isPendingProvisionUnexpiredOrTargeted(provision, nowMs) &&
+        !isPendingProvisionOrphaned(provision, nowMs);
     let botState = { threadMode: "unknown" };
     let records = new Map();
     let identities = new Map();
@@ -2597,6 +2633,7 @@ export function createTelegramTopicTargetStore(options) {
             const ownerKey = getTelegramThreadOwnerKey(getTelegramThreadOwnerFromProfileKey(profileKey));
             const existing = records.get(ownerKey) ?? records.get(profileKey);
             const nowMs = getNowMs();
+            const allocatablePendingProvisions = pendingProvisions.filter((provision) => !isPendingProvisionOrphaned(provision, nowMs));
             const isWorkspaceSlotOccupied = (slot) => Array.from(workspaceBindings.values()).some((binding) => binding.bindingKey !== workspaceBindingKey && binding.slot === slot);
             const isWorkspaceClaimSlotOccupied = (slot) => Array.from(workspaceClaims.values()).some((claim) => claim.identity.bindingKey !== workspaceBindingKey &&
                 claim.identity.slot === slot);
@@ -2619,7 +2656,7 @@ export function createTelegramTopicTargetStore(options) {
                 const foreignClaim = Array.from(workspaceClaims.values()).some((other) => other !== claim && other.identity.slot === slot);
                 const foreignBinding = Array.from(workspaceBindings.values()).some((binding) => binding.bindingKey !== workspaceBindingKey && binding.slot === slot);
                 if (foreignClaim || foreignBinding || isExternalSlotOccupied(slot) ||
-                    isTelegramTopicTargetSlotOccupied(slot, records, reservations, pendingProvisions, nowMs))
+                    isTelegramTopicTargetSlotOccupied(slot, records, reservations, allocatablePendingProvisions, nowMs))
                     return undefined;
                 return slot;
             }
@@ -2627,10 +2664,10 @@ export function createTelegramTopicTargetStore(options) {
                 !isExternalSlotOccupied(preferredSlot) &&
                 !isWorkspaceSlotOccupied(preferredSlot) &&
                 !isWorkspaceClaimSlotOccupied(preferredSlot) &&
-                !isTelegramTopicTargetSlotOccupied(preferredSlot, records, reservations, pendingProvisions, nowMs)) {
+                !isTelegramTopicTargetSlotOccupied(preferredSlot, records, reservations, allocatablePendingProvisions, nowMs)) {
                 return preferredSlot;
             }
-            const next = getNextMonotonicSlot(records, reservations, pendingProvisions, nowMs, botState.lastSlot);
+            const next = getNextMonotonicSlot(records, reservations, allocatablePendingProvisions, nowMs, botState.lastSlot);
             if (next && !isExternalSlotOccupied(next) &&
                 !isWorkspaceSlotOccupied(next) &&
                 !isWorkspaceClaimSlotOccupied(next))
@@ -2639,7 +2676,7 @@ export function createTelegramTopicTargetStore(options) {
                 .find((slot) => !isExternalSlotOccupied(slot) &&
                 !isWorkspaceSlotOccupied(slot) &&
                 !isWorkspaceClaimSlotOccupied(slot) &&
-                !isTelegramTopicTargetSlotOccupied(slot, records, reservations, pendingProvisions, nowMs));
+                !isTelegramTopicTargetSlotOccupied(slot, records, reservations, allocatablePendingProvisions, nowMs));
         },
     };
 }
