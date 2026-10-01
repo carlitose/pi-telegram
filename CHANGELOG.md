@@ -4,6 +4,7 @@
 
 ## Unreleased
 
+- `Assistant control projection`: The pure public `/controls` API projects existing JSON/CML prompt comments and fences into renderer-neutral footer/list rows without a connected bot or callback publication. Disabled and Generative App method cells remain unavailable; consumers own display, lifecycle fencing and explicit activation. Telegram delivery is unchanged.
 - `Mid-run steering`: A Telegram message sent while Pi is working now enters the running work at the next turn boundary, like a terminal steer, instead of waiting for the whole run to settle. One ready prompt per boundary, Priority first; the bot reacts 👀 when the model reads it and replies silently if the run ends first. Skip, guest, control continuations and large image documents still wait for idle.
 - `Later prompts`: `/later <message>`, also as a photo or document caption, queues a normal prompt that waits until Pi is idle and is never steered into running work; prompts behind it can still steer. Bare `/later` shows usage. The command is listed in the bot menu and help, and reserved against prompt templates.
 - `Turn notifications`: Messages sent while a run is still working are now silent: thinking and tool activity, including HTML fallback, and intermediate assistant commentary from any source. The final reply, turn errors and aborts, terminal-partial output and remote questions still notify. Content, order, modes and edits are unchanged.
