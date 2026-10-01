@@ -270,6 +270,8 @@ Defaults are chosen for ordinary private-bot use: saved config in `~/.pi/agent`,
 
 ## Extension Platform
 
+Companion extensions can also project ordinary assistant buttons onto another display through the pure public [`/controls` API](./docs/public-api.md#pure-assistant-controls), without connecting a bot or changing Telegram delivery. Consumers own safe display, session fencing and explicit selection; Generative App methods remain unavailable in this projection.
+
 Companion extensions can integrate with Telegram without owning polling or transport:
 
 - Register Telegram slash commands.
