@@ -94,6 +94,10 @@
       "types": "./dist/api/voice.d.ts",
       "default": "./dist/api/voice.js"
     },
+    "./controls": {
+      "types": "./dist/api/controls.d.ts",
+      "default": "./dist/api/controls.js"
+    },
     "./keyboard": {
       "types": "./dist/api/keyboard.d.ts",
       "default": "./dist/api/keyboard.js"

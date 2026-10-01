@@ -39,6 +39,7 @@ import * as Queue from "./queue.ts";
 import * as Recovery from "./recovery.ts";
 import * as Replies from "./replies.ts";
 import * as Routing from "./routing.ts";
+import * as RemoteDialogs from "./remote-dialogs.ts";
 import * as Runtime from "./runtime.ts";
 import * as Sections from "./sections.ts";
 import * as Skills from "./skills.ts";
@@ -231,6 +232,9 @@ export default function (pi: Pi.ExtensionAPI) {
     commitPersist: lockRuntime.commitIfOwned,
     getExternalReservedSlots: function () {
       return workspaceAdmissionRuntime.resolve()?.listReservedSlots() ?? [];
+    },
+    getCurrentLeaderEpoch: function () {
+      return lockRuntime.getOwnedLeaderEpoch();
     },
   });
   runtimeDiagnostics.bindStorage({
@@ -657,6 +661,32 @@ export default function (pi: Pi.ExtensionAPI) {
     deleteMessage: deleteTelegramMessage,
     prepareTempDir,
   } = telegramApiRuntime;
+  const remoteDialogs = RemoteDialogs.createTelegramRemoteDialogRuntime<Pi.ExtensionContext>({
+    getTarget: proactivePushTargetGetter,
+    getAllowedUserId: configStore.getAllowedUserId,
+    getBotId: getTelegramBotId,
+    getTransportStamp: telegramTransportStampRuntime.getStamp,
+    isTransportStampActive: telegramTransportStampRuntime.isActive,
+    getAuthorityKey() {
+      if (ownsTelegramDirectDelivery()) {
+        const epoch = getCurrentLeaderEpoch();
+        return epoch === undefined ? undefined : `direct:${epoch}`;
+      }
+      if (!telegramBusFollowerRegistrationState.isRegistered()) return undefined;
+      const generation = telegramBusFollowerRegistrationState.getGeneration();
+      return generation ? `follower:${generation}` : undefined;
+    },
+    isCurrent(ctx) {
+      return telegramSessionContextStore.isCurrent(ctx) &&
+        Pi.getExtensionContextMode(ctx) === "tui";
+    },
+    getSessionId: Pi.getExtensionContextSessionId,
+    sendMessage,
+    recordMessageOwnership: messageOwnershipRuntime.recordLocal,
+    recordError(error) {
+      recordRuntimeEvent("delivery", error, { phase: "remote-dialog-notice" });
+    },
+  });
 
   // --- Message Delivery ---
 
@@ -788,6 +818,7 @@ export default function (pi: Pi.ExtensionAPI) {
     activityRuntime,
     activityVerbosityRuntime,
     assistantOutputRuntime,
+    localPromptEchoRuntime,
     publicationRuntime,
   } = Bindings.createTelegramActivityBindingRuntime({
     generation: deliveryGenerationSeed,
@@ -835,6 +866,7 @@ export default function (pi: Pi.ExtensionAPI) {
     requestNextDispatchAnnouncement,
     cancelNextDispatchAnnouncement,
     watchdog: queueDispatchWatchdogRuntime,
+    midRunSteer,
   } = Bindings.createTelegramQueueBindingRuntime({
     store: telegramQueueStore,
     queue,
@@ -849,6 +881,7 @@ export default function (pi: Pi.ExtensionAPI) {
     updateStatus,
     sendTextReply,
     sendUserMessage,
+    setMessageReaction: telegramApiRuntime.setMessageReaction,
     reconcileNextDispatchAnnouncementReplyOwnership(item) {
       Replies.preserveTransportReplyDedupOnNextReset(
         item.chatId,
@@ -1108,6 +1141,7 @@ export default function (pi: Pi.ExtensionAPI) {
     buttonActionStore,
     invokeBoundButtonAction: invokeGenerativeAppBoundButtonAction,
     inboundHandlerRuntime,
+    consumeRemoteDialogReply: remoteDialogs.consume,
     threadStore,
     runWorkspaceOperation: telegramWorkspaceOperationRuntime.run,
     updateStatus,
@@ -1996,6 +2030,7 @@ export default function (pi: Pi.ExtensionAPI) {
     activityRuntime,
     activityVerbosityRuntime,
     assistantOutputRuntime,
+    localPromptEchoRuntime,
     publicationRuntime,
     configStore,
     abort,
@@ -2022,6 +2057,7 @@ export default function (pi: Pi.ExtensionAPI) {
     sendMarkdownReply,
     sendTextReply,
     dispatchNextQueuedTelegramTurn,
+    midRunSteer,
     onPromptHandedOff(turn, ctx) {
       updateAdmissionRuntimeBinding
         .getSettlement()
@@ -2052,4 +2088,6 @@ export default function (pi: Pi.ExtensionAPI) {
     updateStatus,
     recordRuntimeEvent,
   });
+  Pi.registerPiRemoteDialogResponder(pi, remoteDialogs.offer);
+  Pi.registerPiCodeQuestionResponder(pi, telegramSessionContextStore.get, remoteDialogs.offerQuestion);
 }

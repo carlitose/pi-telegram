@@ -17,6 +17,7 @@ Preferred public imports:
 
 ```ts
 import telegram from "@llblab/pi-telegram";
+import { projectAssistantPromptControls } from "@llblab/pi-telegram/controls";
 import { registerTelegramSection } from "@llblab/pi-telegram/sections";
 import { registerTelegramStatusLineProvider } from "@llblab/pi-telegram/status";
 import { registerTelegramUpdateHandler } from "@llblab/pi-telegram/updates";
@@ -32,6 +33,14 @@ import {
 ```
 
 `0.12.0` intentionally removes the published `@llblab/pi-telegram/lib/*.ts` compatibility wildcard. Integrations should use the public API domain subpaths above. Package exports point at `/api/*.ts` membranes that re-export only stable companion-extension symbols; implementation modules under `lib/` remain package-private. Telegram command extensions use `/commands` as an explicit opt-in surface instead of automatically exposing arbitrary Pi slash commands to Telegram. See [Public API Smoke Examples](#public-api-smoke-examples) below for minimal companion-extension patterns that avoid implementation imports.
+
+## Pure Assistant Controls
+
+`projectAssistantPromptControls(markdown)` from `/controls` returns `{ markdown, rows }` using the existing HTML button plan: exact top-level comments and completed `telegram_button` fences share JSON/CML validation, escaping and row semantics. This is a footer/list adaptation, not native in-body Rich placement. Invalid, unfinished and literal wrappers activate nothing. The input is never modified; the call registers no durable callbacks and requires no connected bot.
+
+Each cell has `label` and `disabled`. Enabled cells include the exact normalized `prompt` and optional `selectedStyle`. Unavailable cells have no prompt and carry `unavailableReason`: `disabled`, `bound-method` or `invalid-bound-method`. Generative App actions, including malformed bound syntax, never become ordinary prompts. The projection does not invoke methods, authenticate users, submit prompts, or grant approval.
+
+Consumers keep stored messages unchanged, sanitize labels for their display, publish selection authority only from complete eligible messages, and own supersession/session/branch fencing and one-shot explicit activation. Pi consumers should use public display transforms and non-modal widgets, with public `followUp` delivery while busy. Rendering and repeated projection must never submit actions; unsupported hosts retain readable choices. Telegram's existing delivery/callback pipeline is unchanged.
 
 ## User-Facing API
 
@@ -55,6 +64,7 @@ Stable commands inside the paired Telegram DM:
 - `/compact` — open confirmation and compact when idle.
 - `/next` — abort active work first when needed, attempt the interrupted prompt's abort notice, then reply `Dispatching next queued turn.` to the exact queued prompt selected for the next model turn. That dispatch notice owns the turn's one reply header; later answer messages do not reply to the same prompt again. Abort-notice failure is diagnostic and cannot block dispatch. A later `/abort` or `/stop` cancels both pending transition notices before taking ownership. The `/next` command itself is never the lifecycle-notice reply target, and aborted pending assistant text is suppressed.
 - `/continue` — enqueue a priority `continue` prompt.
+- `/later <message>` — enqueue a normal prompt (text, or a photo/document caption with its attachments) that waits for idle dispatch and is never steered into a running Pi run; bare `/later` replies with usage.
 - `/abort` — abort active work and keep the queue; abort-history is scoped to Telegram-owned active turns.
 - `/stop` — abort active Telegram-owned work and clear waiting Telegram queue items.
 

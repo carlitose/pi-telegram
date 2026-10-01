@@ -30,6 +30,7 @@ test("Public package subpaths expose the stable extension API", async () => {
     sections,
     status,
     voice,
+    controls,
     keyboard,
   ] = await Promise.all([
     import("@llblab/pi-telegram"),
@@ -42,6 +43,7 @@ test("Public package subpaths expose the stable extension API", async () => {
     import("@llblab/pi-telegram/sections"),
     import("@llblab/pi-telegram/status"),
     import("@llblab/pi-telegram/voice"),
+    import("@llblab/pi-telegram/controls"),
     import("@llblab/pi-telegram/keyboard"),
   ]);
 
@@ -86,6 +88,10 @@ test("Public package subpaths expose the stable extension API", async () => {
     "registerTelegramVoiceSynthesisProvider",
     "registerTelegramVoiceTranscriptionProvider",
     "shouldSuppressPreviewForVoice",
+  ]);
+  assert.deepEqual(Object.keys(controls), ["projectAssistantPromptControls"]);
+  assert.deepEqual(controls.projectAssistantPromptControls("<!-- telegram_button {Run|run} -->").rows, [
+    [{ label: "Run", prompt: "run", disabled: false }],
   ]);
   assert.deepEqual(Object.keys(keyboard), []);
 });

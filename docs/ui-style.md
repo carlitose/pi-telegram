@@ -36,6 +36,7 @@ Use emoji as stable semantic markers, not decoration. Emoji carry transportable 
 | `🔬` | Activity / technical detail | Activity settings row and detail card | Chooses quiet, thinking, tools, or verbose bridge activity; not a generic diagnostics marker. |
 | `🧠` | Model thinking controls | Thinking menus and status rows | Thinking activity quotes omit this icon and their header entirely to minimize chat height. |
 | `📎` | Attachment | Attachment summaries, queue rows for attachment-only turns | Not for thread binding. |
+| `💻` | Local terminal prompt | Companion echo of a prompt typed at the terminal | Prefixes literal plain text sent silently; attachments are counted as `📎 ×N`. Not for Telegram-originated prompts. |
 | `👁` | Read-only inspection | State/detail viewers and inspection entrypoints | Opens evidence without mutating the inspected object; do not use for edit or refresh actions. |
 
 ### Command And Control Actions
@@ -46,6 +47,7 @@ Use emoji as stable semantic markers, not decoration. Emoji carry transportable 
 | `🗜` | Compact session | `/compact`, compact confirmation action | Do not use for generic cleanup/delete. |
 | `⏩` | Abort and advance | Busy `/next` command result and matching menu action | Means the active turn is aborted before advancing to queued work. |
 | `▶️` | Play / continue immediately | Idle `/next` result, `/continue` command, and matching menu action | Means work can start or resume directly without first aborting an active turn. |
+| `🔜` | Defer until idle | `/later` command description and usage | Queues work for idle dispatch; the prompt is never steered into running work. |
 | `⏹️` | Abort current Pi work | `/abort` command description and active `/stop` result | Stops active work; accompanying copy states separately when queued work is cleared. |
 | `🟥` | Destructive stop command | `/stop` command description | Strong warning at the command/action entrypoint; standalone results use the more precise idle or abort state icon. |
 | `🆕` | New session / fresh start | `/new`, session replacement notices | `/new` replaces the active Pi session while preserving the current classic chat or Thread target; use it only for a real session reset. |

@@ -86,6 +86,8 @@ export interface PendingTelegramTurn extends TelegramQueueItemBase {
     reactionSuppressionEmoji?: string;
     /** Emit the explicit aborted-turn notice when /next settles this active turn. */
     announceNextAbortOnEnd?: boolean;
+    /** Queued with /later: waits for idle dispatch and never steers mid-run. */
+    deferUntilIdle?: boolean;
     /** Turn should preferably be delivered as voice (mirror mode + user sent voice) */
     voiceReplyPreferred?: boolean;
     /** Turn must be delivered as voice (voice mode) */
@@ -122,6 +124,7 @@ export interface TelegramPromptQueueHandoffPayload extends TelegramQueueHandoffB
     reactionSuppressionEmoji?: string;
     voiceReplyPreferred?: boolean;
     voiceReplyRequired?: boolean;
+    deferUntilIdle?: boolean;
 }
 export interface TelegramControlQueueHandoffPayload extends TelegramQueueHandoffBase {
     kind: "control";
@@ -653,6 +656,10 @@ export interface TelegramPromptEnqueueRuntimeDeps<TMessage, TContext = unknown> 
     dispatchNextQueuedTelegramTurn: () => void;
     assertExecutionCurrent?: () => void;
     onQueued?: (turn: PendingTelegramTurn) => void;
+    deferUntilIdle?: boolean;
+}
+export interface TelegramPromptEnqueueOptions {
+    deferUntilIdle?: boolean;
 }
 export interface TelegramPromptEnqueueControllerDeps<TMessage, TContext = unknown> extends TelegramQueueStore<TContext> {
     hasPendingDispatch: () => boolean;
@@ -664,7 +671,7 @@ export interface TelegramPromptEnqueueControllerDeps<TMessage, TContext = unknow
     assertExecutionCurrent?: (messages: TMessage[]) => void;
 }
 export interface TelegramPromptEnqueueController<TMessage, TContext = unknown> {
-    enqueue: (messages: TMessage[], ctx: TContext, onQueued?: (turn: PendingTelegramTurn) => void) => Promise<PendingTelegramTurn>;
+    enqueue: (messages: TMessage[], ctx: TContext, onQueued?: (turn: PendingTelegramTurn) => void, options?: TelegramPromptEnqueueOptions) => Promise<PendingTelegramTurn>;
 }
 export declare function buildTelegramSessionStartState<TModel = unknown>(currentModel: TModel | undefined): TelegramSessionStartState<TModel>;
 export declare function buildTelegramSessionShutdownState<TQueueItem>(): TelegramSessionShutdownState<TQueueItem>;
@@ -695,6 +702,7 @@ export interface TelegramControlRuntimeDeps<TContext> extends TelegramRuntimeEve
     ctx: TContext;
     sendTextReply: (chatId: number, replyToMessageId: number, text: string, options?: {
         target?: TelegramQueueTarget;
+        disableNotification?: boolean;
     }) => Promise<number | undefined>;
     onSettled: (item: PendingTelegramControlItem<TContext>) => void;
 }
@@ -732,7 +740,7 @@ export interface TelegramQueueDispatchWatchdogRuntimeDeps<TContext = unknown> ex
 }
 export declare function createTelegramQueueDispatchWatchdogRuntime<TContext = unknown>(deps: TelegramQueueDispatchWatchdogRuntimeDeps<TContext>): TelegramQueueDispatchWatchdogRuntime<TContext>;
 export interface TelegramPromptDeliveryOptions {
-    deliverAs: "followUp";
+    deliverAs: "steer" | "followUp";
 }
 export interface TelegramDispatchRuntimeDeps<TContext = unknown> {
     executeControlItem: (item: Extract<TelegramQueueDispatchAction<TContext>, {
@@ -779,3 +787,48 @@ export declare function executeTelegramQueueDispatchPlan<TContext = unknown>(pla
 export type TelegramQueueDispatchRuntimeDeps<TContext = unknown> = Omit<TelegramQueueDispatchControllerDeps<TContext>, "canDispatch"> & TelegramDispatchReadinessDeps<TContext>;
 export declare function createTelegramQueueDispatchRuntime<TContext = unknown>(deps: TelegramQueueDispatchRuntimeDeps<TContext>): TelegramQueueDispatchController<TContext>;
 export declare function createTelegramQueueDispatchController<TContext = unknown>(deps: TelegramQueueDispatchControllerDeps<TContext>): TelegramQueueDispatchController<TContext>;
+export declare const TELEGRAM_MID_RUN_STEER_REACTION_EMOJI = "\uD83D\uDC40";
+export declare const TELEGRAM_MID_RUN_STEER_QUEUE_WAIT_MS = 500;
+export declare const TELEGRAM_MID_RUN_STEER_MAX_IMAGE_BASE64_CHARS: number;
+export declare const TELEGRAM_MID_RUN_STEER_UNDELIVERED_TEXT = "\u26A0\uFE0F Not delivered: the agent finished before reading this message. Send it again if it still matters.";
+export interface TelegramMidRunSteerCandidateDeps<TContext = unknown> {
+    isQueueItemTransportActive?: (item: TelegramQueueItem<TContext>) => boolean;
+    hasPendingInboundQueueMutationForItem?: (item: TelegramQueueItem<TContext>) => boolean;
+    isQueueItemAdmissionReady?: (item: TelegramQueueItem<TContext>) => boolean;
+}
+export declare function canTelegramMidRunSteerContent(content: readonly TelegramPromptContent[]): boolean;
+/**
+ * Pick the queued prompt a busy run may absorb at its next turn boundary.
+ * Control-lane work, /later, Skip-suppressed prompts, and guest queries keep
+ * waiting for idle dispatch; an unready or oversized candidate blocks steering
+ * so lanes stay FIFO.
+ */
+export declare function selectTelegramMidRunSteerCandidate<TContext = unknown>(items: readonly TelegramQueueItem<TContext>[], deps: TelegramMidRunSteerCandidateDeps<TContext>): PendingTelegramTurn | undefined;
+export interface TelegramMidRunSteerRuntimeDeps<TContext = unknown> extends TelegramMidRunSteerCandidateDeps<TContext>, TelegramRuntimeEventRecorderPort {
+    getQueuedItems: () => TelegramQueueItem<TContext>[];
+    setQueuedItems: (items: TelegramQueueItem<TContext>[]) => void;
+    isIdle: (ctx: TContext) => boolean;
+    hasPendingMessages: (ctx: TContext) => boolean;
+    isCompactionInProgress: () => boolean;
+    hasDispatchPending: () => boolean;
+    /** Settles durable receipts exactly like an idle prompt handoff. */
+    commitPromptDispatch?: (item: PendingTelegramTurn, ctx: TContext) => boolean;
+    sendUserMessage: (content: PendingTelegramTurn["content"], options: {
+        deliverAs: "steer";
+    }) => void;
+    updateStatus: (ctx: TContext) => void;
+    onInjectionConsumed?: (item: PendingTelegramTurn) => Promise<void> | void;
+    onInjectionUndelivered?: (item: PendingTelegramTurn) => Promise<void> | void;
+    /** Bounded turn_end hold so Pi queues the steer before its loop polls. */
+    queueWaitMs?: number;
+}
+export interface TelegramMidRunSteerRuntime<TContext = unknown> {
+    onTurnEnd: (event: unknown, ctx: TContext) => Promise<void>;
+    onMessageStart: (event: unknown) => void;
+    onAgentSettled: (ctx: TContext) => void;
+    /** True for the Pi input event produced by the pending injection itself. */
+    isInjectedInput: (text: string) => boolean;
+    hasPendingInjection: () => boolean;
+    reset: () => void;
+}
+export declare function createTelegramMidRunSteerRuntime<TContext = unknown>(deps: TelegramMidRunSteerRuntimeDeps<TContext>): TelegramMidRunSteerRuntime<TContext>;

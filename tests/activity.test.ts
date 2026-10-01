@@ -13,6 +13,7 @@ import {
   createTelegramActivityPublicationRuntime,
   createTelegramActivityRuntime,
   createTelegramAssistantOutputRuntime,
+  createTelegramLocalPromptEchoRuntime,
   registerTelegramActivityHandler,
   type TelegramActivityEvent,
   type TelegramAssistantSegmentEvent,
@@ -27,6 +28,8 @@ import {
   createTelegramAssistantOutputMutationFence,
   createTelegramAssistantOutputSender,
   createTelegramButtonActionStore,
+  createTelegramLocalPromptEchoSender,
+  formatTelegramLocalPromptEcho,
   createTelegramButtonReplyPlanner,
 } from "../lib/outbound.ts";
 import type { TelegramBridgeApiRuntime } from "../lib/telegram-api.ts";
@@ -973,6 +976,32 @@ for (const rendering of ["rich", "html"] as const) {
   });
 }
 
+for (const rendering of ["rich", "html"] as const) {
+  test(`Assistant ${rendering} projection notifies only for final and terminal-partial segments`, async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const send = createTelegramAssistantOutputSender<string>({
+      sendMessage: async (body) => { bodies.push(body); return { message_id: bodies.length }; },
+      sendRichMessage: async (body) => { bodies.push(body); return { message_id: bodies.length }; },
+      editMessage: async () => "edited", getAssistantRenderingMode: () => rendering,
+      execCommand: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
+    });
+    const authority = {
+      transportStamp: "stamp-1",
+      route: "direct" as const,
+      directEpoch: 1,
+      target: { chatId: 10, threadId: 42 },
+    };
+    const placements = ["intermediate", "final", "terminal-partial"] as const;
+    for (const [index, placement] of placements.entries()) {
+      await send(assistantSegment(index + 1, { placement }), authority, () => true);
+    }
+    assert.deepEqual(
+      bodies.map((body) => body.disable_notification),
+      [true, undefined, undefined],
+    );
+  });
+}
+
 test("Assistant output projection strips foreign comments and skips comment-only segments", async () => {
   const sent: Array<Record<string, unknown>> = [];
   const send = createTelegramAssistantOutputSender<string>({
@@ -1098,4 +1127,95 @@ test("Assistant output projection drops queued work after generation stop", asyn
   release();
   await runtime.waitForIdle();
   assert.deepEqual(sent, [1]);
+});
+
+test("Local prompt echo admits only interactive prompts with content, once started", async () => {
+  const sent: Array<{ text: string; imageCount: number }> = [];
+  const runtime = createTelegramLocalPromptEchoRuntime({
+    canDeliver: () => true,
+    send: async (echo) => { sent.push(echo); },
+  });
+  runtime.accept({ source: "interactive", text: "before start", imageCount: 0 });
+  runtime.start();
+  runtime.accept({ source: "interactive", text: "typed locally", imageCount: 0 });
+  for (const source of ["rpc", "extension", "unknown"] as const) {
+    runtime.accept({ source, text: `from ${source}`, imageCount: 0 });
+  }
+  runtime.accept({ source: "interactive", text: "   ", imageCount: 0 });
+  runtime.accept({ source: "interactive", text: undefined, imageCount: 0 });
+  runtime.accept({ source: "interactive", text: "", imageCount: 2 });
+  await runtime.waitForIdle();
+  runtime.stop();
+  runtime.accept({ source: "interactive", text: "after stop", imageCount: 0 });
+  await runtime.waitForIdle();
+  assert.deepEqual(sent, [
+    { text: "typed locally", imageCount: 0 },
+    { text: "", imageCount: 2 },
+  ]);
+});
+
+test("Local prompt echo shares publication order and admission authority with assistant output", async () => {
+  const publication = createTelegramActivityPublicationRuntime();
+  const sent: string[] = [];
+  let authority = 1;
+  const echo = createTelegramLocalPromptEchoRuntime({
+    enqueue: publication.enqueue,
+    captureAuthority: () => authority,
+    isAuthorityActive: (admitted) => admitted === authority,
+    canDeliver: () => true,
+    send: async (prompt) => { sent.push(`echo:${prompt.text}`); },
+  });
+  const output = createTelegramAssistantOutputRuntime({
+    enqueue: publication.enqueue,
+    canDeliver: () => true,
+    send: async (event) => { sent.push(`reply:${event.text}`); },
+  });
+  echo.start();
+  output.start();
+  echo.accept({ source: "interactive", text: "question", imageCount: 0 });
+  output.accept(assistantSegment(1, { text: "answer" }));
+  await Promise.all([echo.waitForIdle(), output.waitForIdle()]);
+  authority = 2;
+  echo.accept({ source: "interactive", text: "stale", imageCount: 0 });
+  authority = 3;
+  await echo.waitForIdle();
+  assert.deepEqual(sent, ["echo:question", "reply:answer"]);
+});
+
+test("Local prompt echo formats literal text, attachment count, and a bounded single message", () => {
+  assert.equal(formatTelegramLocalPromptEcho({ text: "  hello\nworld  ", imageCount: 0 }), "💻 hello\nworld");
+  assert.equal(formatTelegramLocalPromptEcho({ text: "look", imageCount: 2 }), "💻 look\n📎 ×2");
+  assert.equal(formatTelegramLocalPromptEcho({ text: "", imageCount: 1 }), "💻 📎 ×1");
+  const long = formatTelegramLocalPromptEcho({ text: "a".repeat(3005), imageCount: 0 });
+  assert.equal(long, `💻 ${"a".repeat(3000)}… (+5)`);
+  const astral = formatTelegramLocalPromptEcho({ text: "😀".repeat(3000), imageCount: 0 });
+  assert.ok(astral.length <= 3020, "the clip bounds UTF-16 length, not only code points");
+  assert.equal(astral.endsWith("… (+1500)"), true);
+});
+
+test("Local prompt echo sends one silent plain-text message to the authorized target", async () => {
+  const bodies: Array<Record<string, unknown>> = [];
+  const send = createTelegramLocalPromptEchoSender<string>({
+    sendMessage: async (body) => { bodies.push(body); return { message_id: 1 }; },
+    sendRichMessage: async (body) => { bodies.push({ rich: true, ...body }); return { message_id: 2 }; },
+    editMessage: async () => "edited",
+    getAssistantRenderingMode: () => "rich",
+  });
+  await send(
+    { text: "**not bold** <b>tag</b>", imageCount: 0 },
+    { transportStamp: "stamp-1", route: "direct", directEpoch: 1, target: { chatId: 10, threadId: 42 } },
+    () => true,
+  );
+  assert.equal(bodies.length, 1);
+  assert.equal(bodies[0]?.rich, undefined);
+  assert.equal(bodies[0]?.chat_id, 10);
+  assert.equal(bodies[0]?.message_thread_id, 42);
+  assert.equal(bodies[0]?.disable_notification, true);
+  assert.equal(bodies[0]?.reply_parameters, undefined);
+  assert.match(String(bodies[0]?.text), /^💻 \*\*not bold\*\* (<b>tag<\/b>|&lt;b&gt;tag&lt;\/b&gt;)$/u);
+  await assert.rejects(
+    send({ text: "late", imageCount: 0 }, { transportStamp: "stamp-1", route: "direct", directEpoch: 1, target: { chatId: 10 } }, () => false),
+    /lost admission authority before transport mutation/,
+  );
+  assert.equal(bodies.length, 1);
 });

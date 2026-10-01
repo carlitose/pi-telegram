@@ -182,6 +182,7 @@ export async function sendTelegramRenderedChunks(chatId, chunks, deps, options) 
             reply_markup: index === chunks.length - 1 ? options?.replyMarkup : undefined,
             ...(replyParameters ? { reply_parameters: replyParameters } : {}),
             ...(options?.target ? getTelegramTargetThreadParams(options.target) : {}),
+            ...(options?.disableNotification ? { disable_notification: true } : {}),
         }));
         lastMessageId = sent.message_id;
         deps.recordOwnership?.({
@@ -221,6 +222,7 @@ export async function sendTelegramPlainReply(text, deps, options) {
     return deps.sendRenderedChunks(chunks, {
         target: options?.target,
         replyToMessageId: options?.replyToMessageId,
+        ...(options?.disableNotification ? { disableNotification: true } : {}),
     });
 }
 function normalizeIndentedTelegramNativeMarkdownList(line) {
@@ -532,6 +534,9 @@ export function createTelegramRenderedMessageRuntime(deps) {
                 sendRenderedChunks: (chunks, chunkOptions) => deps.replyTransport.sendRenderedChunks(chatId, chunks, {
                     target: chunkOptions?.target,
                     replyToMessageId: chunkOptions?.replyToMessageId ?? replyToMessageId,
+                    ...(chunkOptions?.disableNotification
+                        ? { disableNotification: true }
+                        : {}),
                 }),
             }, options);
         },

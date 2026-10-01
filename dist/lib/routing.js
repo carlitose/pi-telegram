@@ -1509,10 +1509,10 @@ export function createTelegramInboundRouteRuntime(deps) {
         dispatchNextQueuedTelegramTurn: requestDispatchNextQueuedTelegramTurn,
         assertExecutionCurrent: (messages) => Updates.assertTelegramUpdateExecutionCurrent(messages[0]),
     });
-    const promptEnqueue = async (messages, ctx) => {
+    const promptEnqueue = async (messages, ctx, options) => {
         return promptEnqueueController.enqueue(messages, ctx, (turn) => {
             reportQueueAdmission(messages, turn.admissionReceipts ?? []);
-        });
+        }, options);
     };
     const sendUnboundRerouteChooserNow = async (messages, _ctx, reportDeferred = true) => {
         const message = messages[0];
@@ -1780,6 +1780,13 @@ export function createTelegramInboundRouteRuntime(deps) {
         enqueueTurn: async (messages, ctx) => {
             await promptEnqueue(messages, ctx);
         },
+        enqueueLaterTurn: async (messages, ctx) => {
+            await promptEnqueue(messages, ctx, { deferUntilIdle: true });
+        },
+        replyLaterUsage: async (message) => {
+            Updates.assertTelegramUpdateExecutionCurrent(message);
+            await deps.sendTextReply(message.chat.id, message.message_id, Commands.TELEGRAM_LATER_USAGE_HTML, { parseMode: "HTML", target: Updates.getTelegramMessageTarget(message) });
+        },
     });
     dispatchReroutedCommandMessages = (messages, ctx) => commandOrPrompt.dispatchMessages(messages, ctx);
     const mediaDispatch = Media.createTelegramMediaGroupDispatchRuntime({
@@ -1796,6 +1803,7 @@ export function createTelegramInboundRouteRuntime(deps) {
     const editRuntime = Turns.createTelegramQueuedPromptEditRuntime({
         ...deps.telegramQueueStore,
         updateStatus: deps.updateStatus,
+        stripDeferredCommand: (text) => Commands.parseTelegramLaterCommandText(text) ?? text,
     });
     const handleTelegramTopicLifecycleUpdate = async (lifecycle, ctx) => {
         const assertExecutionCurrent = Updates.createTelegramUpdateExecutionFenceGuard(lifecycle.message);
@@ -1979,6 +1987,8 @@ export function createTelegramInboundRouteRuntime(deps) {
         handleAuthorizedTelegramMessage: async (message, ctx) => {
             const assertExecutionCurrent = Updates.createTelegramUpdateExecutionFenceGuard(message);
             assertExecutionCurrent();
+            if (deps.consumeRemoteDialogReply?.(message, ctx))
+                return;
             if (typeof message.message_thread_id === "number") {
                 await deps.handleTelegramThreadTargetObserved?.({
                     chatId: message.chat.id,
@@ -2051,6 +2061,8 @@ export function createTelegramInboundRouteRuntime(deps) {
             const operation = async () => {
                 const assertExecutionCurrent = Updates.createTelegramUpdateExecutionFenceGuard(message);
                 assertExecutionCurrent();
+                if (deps.consumeRemoteDialogReply?.(message, ctx))
+                    return;
                 if (!deps.threadStore) {
                     await textDispatch.handleMessage(message, ctx);
                     return;

@@ -8,7 +8,7 @@
 
 It is a **runtime adapter**, not a remote terminal. Start or supervise work in the Pi TUI, then continue from Telegram while away from the keyboard. In Threaded Mode, a durable Workspace binding uses Pi's stable public session identity to restore the same Telegram Thread when that session resumes; live instance ownership and the exact Telegram target still authorize routing. The bridge preserves Pi session semantics instead of pretending Telegram is a PTY, shell, process launcher, or session browser. That boundary is the product: Telegram gets safe runtime handles, not raw terminal power.
 
-Every completed intermediate commentary block from a Telegram-originated turn is delivered once as its own message before the existing final reply. While Telegram is connected, local, autonomous, and unclassified extension follow-up work also projects visible checkpoints and the final answer to the authorized Telegram target once and in order, preserving assistant-authored `telegram_button` comments as interactive prompt buttons. This connected companion projection is always active rather than configurable. Neither path mirrors local prompts, thinking, tool traffic, token deltas, or stale-generation work. The separate `Activity` setting defaults to `verbose` so new installations discover collapsed provider-exposed thinking and tool evidence immediately; operators can narrow it to one class or choose `quiet`. See [Outbound](docs/outbound.md#public-assistant-output) and the [configuration reference](docs/public-api.md#configuration-api).
+Every completed intermediate commentary block from a Telegram-originated turn is delivered once as its own message before the existing final reply. While Telegram is connected, local, autonomous, and unclassified extension follow-up work also projects visible checkpoints and the final answer to the authorized Telegram target once and in order, preserving assistant-authored `telegram_button` comments as interactive prompt buttons. This connected companion projection is always active rather than configurable. A prompt typed at the terminal is echoed first, silently, as literal `💻 <text>` so the chat shows what the reply answers; RPC and extension-injected prompts are not echoed. Neither path mirrors thinking, tool traffic, token deltas, or stale-generation work. The separate `Activity` setting defaults to `verbose` so new installations discover collapsed provider-exposed thinking and tool evidence immediately; operators can narrow it to one class or choose `quiet`. Messages sent while a run is still working—commentary and activity—arrive silently; the final reply, turn errors and questions notify. See [Outbound](docs/outbound.md#public-assistant-output) and the [configuration reference](docs/public-api.md#configuration-api).
 
 This repository is an actively maintained standalone fork of [`badlogic/pi-telegram`](https://github.com/badlogic/pi-telegram). It started from upstream commit [`cb34008`](https://github.com/badlogic/pi-telegram/commit/cb34008460b6c1ca036d92322f69d87f626be0fc) and has since diverged substantially.
 
@@ -97,7 +97,7 @@ Enable the optional capabilities the bridge needs in the [@BotFather](https://t.
 ## What It Feels Like
 
 - Start a task in the terminal, walk away, and keep supervising it from your phone.
-- Send another prompt while Pi is busy; it becomes a queued Telegram turn instead of interrupting the active run.
+- Send another prompt while Pi is busy; it waits in the queue and enters the running work at the next turn boundary, like steering from the terminal. The bot marks it with 👀 once the model reads it. Start it with `/later` (also as a photo or document caption) to keep it waiting until Pi is idle instead.
 - Open `/start` to inspect status, model, thinking, settings, prompt templates, and queue controls.
 - Send voice, images, files, replies, edits, or media groups; the bridge turns them into Pi context.
 - Ask for an artifact; `telegram_attach` returns it before the turn's separate final text, or through explicit direct Telegram delivery.
@@ -170,6 +170,7 @@ Use these in the bot DM.
 | `/compact` | Confirm and run session compaction when safe |
 | `/next` | Dispatch the next queued turn, aborting first if needed |
 | `/continue` | Enqueue a priority continuation prompt |
+| `/later <message>` | Queue a prompt, photo or document caption for when Pi is idle; it never steers into running work |
 | `/abort` | Abort the active run while preserving the queue |
 | `/stop` | Abort the active run and clear waiting Telegram turns |
 
@@ -199,6 +200,8 @@ Named profile identifiers contain only lowercase ASCII letters and digits (maxim
 ### Queue Runtime
 
 Messages sent while Pi is busy become queued turns. Queue controls let you inspect, prioritize, keep or skip, and dispatch work without touching the terminal.
+
+While a run is working, the next ready queued prompt steers into it at each turn boundary (after a tool batch or model reply), exactly like a terminal steer: one prompt per boundary, Priority before Normal, and the reply continues in the running work. The bot sets a 👀 reaction on your message when the model reads it. If the run ends before reading it, the bot replies silently that it was not delivered and does not resend it. Skipped prompts, `/later` prompts, guest queries, `/continue` and model-switch continuations, and prompts with large image documents still wait until Pi is idle; a normal prompt behind a `/later` prompt can still steer.
 
 Queue policy:
 
@@ -266,6 +269,8 @@ Most controls live in Pi commands or the Telegram menu. Environment variables re
 Defaults are chosen for ordinary private-bot use: saved config in `~/.pi/agent`, inbound temp files in `~/.pi/agent/tmp/telegram`, `assistant: { rendering: "rich", draftPreviews: true, activity: "verbose", timeInjection: "interval" }` for assistant output and activity, and native Telegram active status for long-running turns.
 
 ## Extension Platform
+
+Companion extensions can also project ordinary assistant buttons onto another display through the pure public [`/controls` API](./docs/public-api.md#pure-assistant-controls), without connecting a bot or changing Telegram delivery. Consumers own safe display, session fencing and explicit selection; Generative App methods remain unavailable in this projection.
 
 Companion extensions can integrate with Telegram without owning polling or transport:
 
