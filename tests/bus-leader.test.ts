@@ -127,6 +127,32 @@ function createTelegramBusLeaderRuntime<TContext>(
   return createRawTelegramBusLeaderRuntime({ ...ports, protocolIdentity });
 }
 
+test("follower recovery prefers its acknowledged pending target over a carried former Workspace target", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-telegram-acknowledged-follower-target-"));
+  try {
+    const store = createTelegramTopicTargetStore({ path: join(dir, "state.json"), getNowMs: () => 1000 });
+    const identity = createTelegramWorkspaceBindingIdentity("/repo", 0, "session")!;
+    const former = { chatId: 7, threadId: 42 };
+    const acknowledged = { chatId: 7, threadId: 43 };
+    store.upsertWorkspaceBinding({ ...identity, target: former, slot: "A", updatedAtMs: 900 });
+    store.upsertPendingProvision({ id: "acknowledged", owner: "manual-follower", instanceId: "follower", profileKey: "manual:follower", workspaceBindingKey: identity.bindingKey, target: acknowledged, slot: "A", startedAtMs: 900 });
+    const methods: string[] = [];
+    let syncState = {};
+    const provision = createTelegramBusFollowerTargetProvisioner({
+      getAllowedUserId: () => 7, topicTargetStore: store,
+      async callApi<TResponse>(method: string) { methods.push(method); return { ok: true } as TResponse; },
+      getNowMs: () => 1000, getSyncState: () => syncState, setSyncState: next => { syncState = next; }, recordRuntimeEvent() {},
+    });
+    const result = await provision({ instanceId: "follower", profileKey: "manual:follower", cwd: "/repo", sessionId: "session", target: former, connectedAtMs: 1000 });
+    assert.equal(result?.threadId, acknowledged.threadId);
+    assert.equal(result?.slot, "A");
+    assert.equal(methods.includes("createForumTopic"), false, "an acknowledged creation must not be issued twice");
+    assert.equal(store.getWorkspaceBinding("/repo", "a", "session")?.target.threadId, acknowledged.threadId);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("Bus leader preserves a binding through follower reload handoff", async () => {
   const dir = mkdtempSync(join(tmpdir(), "pi-telegram-follower-gap-"));
   const store = createTelegramTopicTargetStore({

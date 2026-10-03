@@ -55,6 +55,24 @@ import {
   TelegramApiCommitUnknownError,
 } from "../lib/telegram-api.ts";
 
+test("an acknowledged pending provision reserves its slot from others but not its exact claim recovery", async () => {
+  for (const owner of ["same", "different-instance", "different-binding", "unacknowledged"] as const) {
+    const root = await mkdtemp(join(tmpdir(), "telegram-retained-pending-slot-"));
+    try {
+      const store = createTelegramTopicTargetStore({ path: join(root, "state.json"), getNowMs: () => 1000 });
+      const identity = createTelegramWorkspaceBindingIdentity("/repo", 0, "session")!;
+      store.upsertWorkspaceBinding({ ...identity, target: { chatId: 7, threadId: 42 }, slot: "A", updatedAtMs: 900 });
+      store.upsertPendingProvision({ id: "acknowledged", owner: "manual-follower", instanceId: owner === "different-instance" ? "other" : "follower", workspaceBindingKey: owner === "different-binding" ? "other-binding" : identity.bindingKey, ...(owner !== "unacknowledged" ? { target: { chatId: 7, threadId: 43 } } : {}), slot: "A", startedAtMs: 900 });
+      const claim = store.claimWorkspaceIdentity("/repo", "follower", undefined, { sessionId: "session" });
+      if (owner === "same") assert.equal(claim?.slot, "A");
+      else assert.notEqual(claim?.slot, "A", "another allocation must not take the protected acknowledged slot");
+      assert.equal(store.listPendingProvisions().length, 1, "claim recovery must not consume creation evidence");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+});
+
 test("Stale-target invalidation fences the durable commit and preserves a replacement binding", async () => {
   for (const race of ["none", "generation", "binding", "ownership"] as const) {
     const root = await mkdtemp(join(tmpdir(), "telegram-invalidation-"));

@@ -14,7 +14,7 @@ import {
   editTelegramView,
   sendTelegramChatAction,
   sendTelegramView,
-} from "@llblab/pi-telegram/delivery";
+} from "@carlitose86/pi-telegram-reactive/delivery";
 ```
 
 ## Ownership Boundary

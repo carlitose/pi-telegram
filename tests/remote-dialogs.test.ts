@@ -51,6 +51,12 @@ function fixture(options: { failure?: boolean; deferSend?: boolean; target?: { c
     replaceAuthority: () => { authority = "direct:2"; } };
 }
 
+function questionKeyboard(f: ReturnType<typeof fixture>) {
+  const markup = f.sent[0]?.reply_markup as { inline_keyboard?: Array<Array<{ text: string; callback_data?: string }>> } | undefined;
+  assert.ok(markup && Array.isArray(markup.inline_keyboard), "single-select questions must publish an inline keyboard");
+  return markup.inline_keyboard;
+}
+
 function request(kind: "select" | "confirm" | "input" | "editor", signal: AbortSignal): PiRemoteDialogRequest {
   const common = { type: "ui_prompt_request" as const, requestId: "request-1", sessionId: "session-1", signal, title: "Continue?" };
   if (kind === "select") return { ...common, kind, options: ["A", "B"] };
@@ -207,10 +213,12 @@ test("question offer claims synchronously and sends one exact-target non-silent 
   assert.equal(f.sent[0]?.chat_id, 17);
   assert.equal(f.sent[0]?.message_thread_id, 31);
   assert.equal(f.sent[0]?.disable_notification, false);
-  assert.deepEqual(f.sent[0]?.reply_markup, {
-    force_reply: true,
-    input_field_placeholder: "Reply to this question: choice, text or /cancel",
-  });
+  const keyboard = questionKeyboard(f);
+  assert.equal(keyboard?.length, 3);
+  assert.equal(keyboard?.[0]?.[0]?.text, "1. Alpha");
+  assert.equal(keyboard?.[1]?.[0]?.text, "2. Beta");
+  assert.match(keyboard?.[0]?.[0]?.callback_data ?? "", /^question:[a-f0-9]{24}:1$/);
+  assert.match(keyboard?.[2]?.[0]?.callback_data ?? "", /^question:[a-f0-9]{24}:cancel$/);
   assert.match(f.sent[0]?.text ?? "", /Pick &lt;one&gt; &amp; explain/);
   assert.match(f.sent[0]?.text ?? "", /first &lt;option&gt;/);
   assert.deepEqual(f.ownership, [{ chatId: 17, messageId: 101, target: { chatId: 17, threadId: 31 } }]);
@@ -219,6 +227,51 @@ test("question offer claims synchronously and sends one exact-target non-silent 
   assert.equal(q.touches(), 1);
   assert.equal(f.runtime.consume(f.incoming("2"), context), true);
   assert.equal(q.settled.length, 1);
+});
+
+test("question callbacks fence sender, bot, target, message, token and session before settling synchronously", async () => {
+  const f = fixture();
+  const q = questionRequest();
+  assert.equal(f.runtime.offerQuestion(q.offer, context), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  const data = questionKeyboard(f)[1]?.[0]?.callback_data;
+  assert.ok(data);
+  const callback = { data, from: { id: 17 }, message: { chat: { id: 17 }, from: { id: 99 }, message_thread_id: 31, message_id: 101 } };
+  for (const wrong of [
+    { ...callback, from: { id: 42 } },
+    { ...callback, message: { ...callback.message, from: { id: 42 } } },
+    { ...callback, message: { ...callback.message, chat: { id: 18 } } },
+    { ...callback, message: { ...callback.message, message_thread_id: 32 } },
+    { ...callback, message: { ...callback.message, message_id: 102 } },
+    { ...callback, data: "question:000000000000000000000000:2" },
+    { ...callback, data: data.replace(/:2$/, ":3") },
+  ]) assert.equal(f.runtime.consumeCallback(wrong, context), "🚫 Question no longer available.");
+  assert.equal(f.runtime.consumeCallback(callback, { ...context, sessionId: "other" }), "🚫 Question no longer available.");
+  assert.deepEqual(q.settled, []);
+  assert.equal(q.touches(), 0);
+  assert.equal(f.runtime.consumeCallback(callback, context), "✅ Answer recorded.");
+  assert.deepEqual(q.settled, [{ action: "answer", indices: [2] }]);
+  assert.equal(q.touches(), 1);
+  assert.equal(f.runtime.consumeCallback(callback, context), "🚫 Question no longer available.");
+  assert.equal(f.runtime.consumeCallback({ data: "tgbtn:other" }, context), undefined);
+});
+
+test("question callbacks cannot outlive profile, authority or abort and cancellation settles once", async () => {
+  for (const change of ["switchProfile", "replaceAuthority", "abort", "cancel"] as const) {
+    const f = fixture();
+    const controller = new AbortController();
+    const q = questionRequest(false, controller.signal);
+    f.runtime.offerQuestion(q.offer, context);
+    await new Promise((resolve) => setImmediate(resolve));
+    const data = questionKeyboard(f)[2]?.[0]?.callback_data;
+    assert.ok(data);
+    const query = { data, from: { id: 17 }, message: { chat: { id: 17 }, from: { id: 99 }, message_thread_id: 31, message_id: 101 } };
+    if (change === "abort") controller.abort();
+    else if (change !== "cancel") f[change]();
+    assert.equal(f.runtime.consumeCallback(query, context), change === "cancel" ? "🚫 Question cancelled." : "🚫 Question no longer available.");
+    assert.deepEqual(q.settled, change === "abort" ? [{ action: "pass" }] : change === "cancel" ? [{ action: "cancel" }] : []);
+    controller.abort();
+  }
 });
 
 test("question replies support multi-select, none, free text and cancel", async () => {

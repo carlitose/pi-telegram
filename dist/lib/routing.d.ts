@@ -111,6 +111,7 @@ export interface TelegramInboundRouteRuntimeDeps<TMessage extends TelegramRouted
     invokeBoundButtonAction?: (action: OutboundHandlers.TelegramOutboundButtonAction, query: TCallbackQuery, ctx: TContext) => Promise<false | "new" | "edit">;
     inboundHandlerRuntime: TelegramInboundHandlerRuntime<TContext>;
     consumeRemoteDialogReply?: (message: TMessage, ctx: TContext) => boolean;
+    consumeRemoteDialogCallback?: (query: TCallbackQuery, ctx: TContext) => string | undefined;
     threadStore?: Threads.TelegramTopicTargetStore;
     runWorkspaceOperation?: <T>(input: {
         operationId: string;

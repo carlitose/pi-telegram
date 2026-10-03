@@ -2218,6 +2218,7 @@ export function createTelegramTopicTargetStore(options) {
                     protection: "unknown",
                 }));
                 const nowMs = getNowMs();
+                const retainedSlotKey = retainedSlot?.toLowerCase();
                 const reservedSlots = [
                     ...Array.from(workspaceClaims.values()).map((claim) => claim.identity.slot),
                     ...Array.from(records.values())
@@ -2225,10 +2226,13 @@ export function createTelegramTopicTargetStore(options) {
                         !(retainedTarget && targetMatches(record.target, retainedTarget)))
                         .map((record) => record.slot),
                     ...reservations.filter((reservation) => reservation.expiresAtMs === undefined || reservation.expiresAtMs > nowMs).map((reservation) => reservation.slot),
-                    ...pendingProvisions.filter((provision) => isPendingProvisionLiveOrTargeted(provision, nowMs)).map((provision) => provision.slot),
+                    ...pendingProvisions.filter((provision) => isPendingProvisionLiveOrTargeted(provision, nowMs) &&
+                        // Reserve the acknowledged slot from others, never from this exact claim's recovery.
+                        !(retainedSlotKey && provision.target && provision.instanceId === instanceId &&
+                            provision.workspaceBindingKey === identity.bindingKey &&
+                            provision.slot?.toLowerCase() === retainedSlotKey)).map((provision) => provision.slot),
                     ...externalReservedSlots,
                 ].filter((slot) => !!slot).map((slot) => slot.toLowerCase());
-                const retainedSlotKey = retainedSlot?.toLowerCase();
                 if (retainedSlotKey && reservedSlots.includes(retainedSlotKey))
                     return undefined;
                 const retainedSlotConflicts = !!retainedSlotKey &&

@@ -3,6 +3,7 @@
  * Zones: telegram, pi agent
  * Owns one-shot, exact-target replies for host dialogs and typed pi-code questions.
  */
+import { randomBytes } from "node:crypto";
 function sameTarget(a, b) {
     return a.chatId === b.chatId && a.threadId === b.threadId;
 }
@@ -59,7 +60,7 @@ function renderQuestion(event) {
     const options = event.options.map((option, index) => `${index + 1}. ${escapeHtml(option.label)}${option.description ? ` — ${escapeHtml(option.description)}` : ""}`).join("\n");
     const instructions = event.multiSelect
         ? "Reply to this message with comma-separated option numbers (e.g. 1,2), none, or /cancel."
-        : "Reply to this message with an option number or your own text. Use /text 2 for numeric text, or /cancel.";
+        : "Tap a choice below. For your own text, use Reply on this exact message (/text 2 for numeric text). A plain Thread message does not answer this question.";
     const text = `${marker}\n${heading}\n${options}\n${instructions}`;
     return event.options.length >= 2 && event.options.length <= 4 && text.length <= 4096 ? text : undefined;
 }
@@ -169,6 +170,7 @@ export function createTelegramRemoteDialogRuntime(deps) {
             if (typeof settle !== "function")
                 return false;
             const settleQuestion = settle;
+            const callbackToken = event.multiSelect ? undefined : randomBytes(12).toString("hex");
             // Claim before yielding to transport; a failed/uncertain send releases the
             // producer to its local overlay without retrying the Telegram mutation.
             void (async () => {
@@ -178,13 +180,18 @@ export function createTelegramRemoteDialogRuntime(deps) {
                         ...(target.threadId !== undefined ? { message_thread_id: target.threadId } : {}),
                         text, parse_mode: "HTML", link_preview_options: { is_disabled: true },
                         disable_notification: false,
-                        // A plain Thread message can reference the topic-creation service
-                        // message. Ask the client to anchor input to this question instead.
-                        reply_markup: {
+                        // Buttons identify their own message rather than a Thread service message.
+                        reply_markup: callbackToken ? {
+                            inline_keyboard: [
+                                ...event.options.map((option, index) => [{
+                                        text: `${index + 1}. ${Array.from(option.label).slice(0, 48).join("")}`,
+                                        callback_data: `question:${callbackToken}:${index + 1}`,
+                                    }]),
+                                [{ text: "❌ Cancel", callback_data: `question:${callbackToken}:cancel` }],
+                            ],
+                        } : {
                             force_reply: true,
-                            input_field_placeholder: event.multiSelect
-                                ? "Reply to this question: e.g. 1,2 or /cancel"
-                                : "Reply to this question: choice, text or /cancel",
+                            input_field_placeholder: "Reply to this question: e.g. 1,2 or /cancel",
                         },
                     });
                     if (!Number.isSafeInteger(sent.message_id) || sent.message_id <= 0 ||
@@ -201,14 +208,14 @@ export function createTelegramRemoteDialogRuntime(deps) {
                     const onAbort = () => finish({ action: "pass" });
                     const entry = {
                         event, target, marker: `Pi question [${event.requestId}]`,
-                        sessionId: event.sessionId, transportStamp: stamp, authority, settle: finish,
+                        sessionId: event.sessionId, transportStamp: stamp, authority, callbackToken, settle: finish,
                     };
                     function finish(outcome) {
                         if (pendingQuestions.get(messageKey) !== entry)
-                            return;
+                            return false;
                         pendingQuestions.delete(messageKey);
                         event.signal.removeEventListener("abort", onAbort);
-                        settleQuestion(outcome);
+                        return settleQuestion(outcome);
                     }
                     pendingQuestions.set(messageKey, entry);
                     event.signal.addEventListener("abort", onAbort, { once: true });
@@ -221,6 +228,35 @@ export function createTelegramRemoteDialogRuntime(deps) {
                 }
             })();
             return true;
+        },
+        consumeCallback(query, ctx) {
+            if (!query.data?.startsWith("question:"))
+                return undefined;
+            const unavailable = "🚫 Question no longer available.";
+            const match = /^question:([a-f0-9]{24}):([1-4]|cancel)$/.exec(query.data);
+            const message = query.message;
+            const owner = deps.getAllowedUserId();
+            const botId = deps.getBotId();
+            if (!match || !message || !owner || !botId || query.from?.id !== owner ||
+                message.from?.id !== botId || typeof message.chat.id !== "number" ||
+                typeof message.message_id !== "number")
+                return unavailable;
+            const target = {
+                chatId: message.chat.id,
+                ...(typeof message.message_thread_id === "number" ? { threadId: message.message_thread_id } : {}),
+            };
+            const question = pendingQuestions.get(key(target, message.message_id));
+            if (!question || question.callbackToken !== match[1] || question.event.multiSelect ||
+                !current(question.event, question.target, question.transportStamp, question.authority, ctx))
+                return unavailable;
+            const action = match[2];
+            const index = Number(action);
+            if (action !== "cancel" && index > question.event.options.length)
+                return unavailable;
+            question.event.touch();
+            const accepted = question.settle(action === "cancel"
+                ? { action: "cancel" } : { action: "answer", indices: [index] });
+            return !accepted ? unavailable : action === "cancel" ? "🚫 Question cancelled." : "✅ Answer recorded.";
         },
         consume(message, ctx) {
             const original = message.reply_to_message;

@@ -24,6 +24,15 @@ export interface TelegramRemoteDialogReply {
         };
     };
 }
+export interface TelegramRemoteQuestionCallback {
+    data?: string;
+    from?: {
+        id?: number;
+    };
+    message?: TelegramRemoteDialogReply & {
+        message_id?: number;
+    };
+}
 export declare function createTelegramRemoteDialogRuntime<TContext>(deps: {
     getTarget(): TelegramTarget | undefined;
     getAllowedUserId(): number | undefined;
@@ -44,4 +53,6 @@ export declare function createTelegramRemoteDialogRuntime<TContext>(deps: {
     offer(event: PiRemoteDialogRequest, ctx: TContext): Promise<PiRemoteDialogResponse>;
     offerQuestion(event: PiCodeQuestionOffer, ctx: TContext): boolean;
     consume(message: TelegramRemoteDialogReply, ctx: TContext): boolean;
+    /** Synchronous settlement precedes the caller's best-effort callback acknowledgement. */
+    consumeCallback(query: TelegramRemoteQuestionCallback, ctx: TContext): string | undefined;
 };

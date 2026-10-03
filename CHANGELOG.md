@@ -4,13 +4,20 @@
 
 ## Unreleased
 
-- `Assistant control projection`: The pure public `/controls` API projects existing JSON/CML prompt comments and fences into renderer-neutral footer/list rows without a connected bot or callback publication. Disabled and Generative App method cells remain unavailable; consumers own display, lifecycle fencing and explicit activation. Telegram delivery is unchanged.
+No additional changes beyond the preview candidate below.
+
+## 0.1.0-next.0: Pi Telegram Reactive preview candidate
+
+Local candidate only; npm publication, exact-head cross-platform CI and license/copyright provenance remain gated.
+
+- `Assistant control projection`: The public `/controls` API and package-owned Pi Markdown transformer project assistant JSON/CML controls into readable numbered terminal choices without a bot/token. Stored messages and normal input remain untouched; disabled and Generative App method cells cannot execute. No token widget or ordinary waiting-question flow is restored.
 - `Mid-run steering`: A Telegram message sent while Pi is working now enters the running work at the next turn boundary, like a terminal steer, instead of waiting for the whole run to settle. One ready prompt per boundary, Priority first; the bot reacts 👀 when the model reads it and replies silently if the run ends first. Skip, guest, control continuations and large image documents still wait for idle.
 - `Later prompts`: `/later <message>`, also as a photo or document caption, queues a normal prompt that waits until Pi is idle and is never steered into running work; prompts behind it can still steer. Bare `/later` shows usage. The command is listed in the bot menu and help, and reserved against prompt templates.
 - `Turn notifications`: Messages sent while a run is still working are now silent: thinking and tool activity, including HTML fallback, and intermediate assistant commentary from any source. The final reply, turn errors and aborts, terminal-partial output and remote questions still notify. Content, order, modes and edits are unchanged.
 - `Terminal prompt echo`: While Telegram is connected, a prompt typed at the terminal now appears in the chat as a silent plain-text `💻 <text>` message just before the reply it causes, including steers typed mid-run. Long prompts are clipped to one message and attached images are counted as `📎 ×N`. RPC and extension-injected prompts, including the bridge's own Telegram turns, are not echoed.
 - `Orphaned creation intents`: A topic-creation intent left behind by a leader that lost its epoch before getting a topic no longer blocks its Workspace letter forever. After 30 min, an untargeted, non-ambiguous intent from a superseded epoch stops reserving its slot, and the next save prunes it. Such an intent made follower registration fail with "slot reservation is unavailable". The live leader's own intents still never expire.
-- `Pi dialog bridge (host-gated)`: Prepared exact-target, one-shot Telegram replies for public Pi select/confirm/input/editor requests. An eligible dialog attempts one non-silent message; failed delivery falls back to the local UI, and stale or duplicate replies are not promoted into model input. Requires an approved and compatible Pi host API plus live acceptance before release.
+- `Pi dialog bridge (host-gated)`: Prepared exact-target replies for public Pi dialogs and typed question offers. Single-select question callbacks settle before ACK, fenced by sender, bot, target, message, token, session and authority; stale clicks never become prompts. Failed delivery falls back locally. Requires approved host API and live acceptance; not evidence of mobile support.
+- `Acknowledged follower recovery`: An exact instance/Workspace claim may reclaim its acknowledged pending letter and target without duplicating topic creation. Foreign or unacknowledged intents remain protected; a carried former target cannot override the exact acknowledged creation.
 
 ## 0.51.6: Connection resume and Workspace recovery hotfix
 

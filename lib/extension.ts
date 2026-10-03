@@ -51,6 +51,7 @@ import * as ThreadReconciler from "./thread-reconciler.ts";
 import * as ThreadDisplay from "./thread-display.ts";
 import * as Threads from "./threads.ts";
 import * as TimeInjection from "./time-injection.ts";
+import * as Transcript from "./transcript.ts";
 import * as Updates from "./updates.ts";
 import * as Voice from "./voice.ts";
 import * as WorkspaceAdmission from "./workspace-admission.ts";
@@ -72,6 +73,7 @@ const telegramBusProtocolIdentity =
 // --- Extension Runtime ---
 
 export default function (pi: Pi.ExtensionAPI) {
+  Transcript.registerTelegramTranscript(pi);
   Skills.registerTelegramSkillDiscovery(pi);
   const piRuntime = Pi.createExtensionApiRuntimePorts(pi);
   const {
@@ -1142,6 +1144,7 @@ export default function (pi: Pi.ExtensionAPI) {
     invokeBoundButtonAction: invokeGenerativeAppBoundButtonAction,
     inboundHandlerRuntime,
     consumeRemoteDialogReply: remoteDialogs.consume,
+    consumeRemoteDialogCallback: remoteDialogs.consumeCallback,
     threadStore,
     runWorkspaceOperation: telegramWorkspaceOperationRuntime.run,
     updateStatus,

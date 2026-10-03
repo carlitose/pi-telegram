@@ -50,6 +50,7 @@ import * as ThreadReconciler from "./thread-reconciler.js";
 import * as ThreadDisplay from "./thread-display.js";
 import * as Threads from "./threads.js";
 import * as TimeInjection from "./time-injection.js";
+import * as Transcript from "./transcript.js";
 import * as Updates from "./updates.js";
 import * as Voice from "./voice.js";
 import * as WorkspaceAdmission from "./workspace-admission.js";
@@ -65,6 +66,7 @@ const telegramBusProtocolIdentity = Bus.createTelegramCurrentBusProtocolIdentity
 ]);
 // --- Extension Runtime ---
 export default function (pi) {
+    Transcript.registerTelegramTranscript(pi);
     Skills.registerTelegramSkillDiscovery(pi);
     const piRuntime = Pi.createExtensionApiRuntimePorts(pi);
     const { getActiveTools, getCommands, getThinkingLevel, sendUserMessage, registerCommand, setActiveTools, setModel, setThinkingLevel, } = piRuntime;
@@ -932,6 +934,7 @@ export default function (pi) {
         invokeBoundButtonAction: invokeGenerativeAppBoundButtonAction,
         inboundHandlerRuntime,
         consumeRemoteDialogReply: remoteDialogs.consume,
+        consumeRemoteDialogCallback: remoteDialogs.consumeCallback,
         threadStore,
         runWorkspaceOperation: telegramWorkspaceOperationRuntime.run,
         updateStatus,

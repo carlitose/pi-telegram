@@ -16,23 +16,23 @@ The 0.21 Activity surface requires Pi `0.80.6` or newer. This minimum belongs to
 Preferred public imports:
 
 ```ts
-import telegram from "@llblab/pi-telegram";
-import { projectAssistantPromptControls } from "@llblab/pi-telegram/controls";
-import { registerTelegramSection } from "@llblab/pi-telegram/sections";
-import { registerTelegramStatusLineProvider } from "@llblab/pi-telegram/status";
-import { registerTelegramUpdateHandler } from "@llblab/pi-telegram/updates";
-import { registerTelegramCommand } from "@llblab/pi-telegram/commands";
-import { registerTelegramInboundHandler } from "@llblab/pi-telegram/inbound";
-import { registerTelegramOutboundHandler } from "@llblab/pi-telegram/outbound";
-import { sendTelegramView } from "@llblab/pi-telegram/delivery";
-import { registerTelegramActivityHandler } from "@llblab/pi-telegram/activity";
+import telegram from "@carlitose86/pi-telegram-reactive";
+import { projectAssistantPromptControls } from "@carlitose86/pi-telegram-reactive/controls";
+import { registerTelegramSection } from "@carlitose86/pi-telegram-reactive/sections";
+import { registerTelegramStatusLineProvider } from "@carlitose86/pi-telegram-reactive/status";
+import { registerTelegramUpdateHandler } from "@carlitose86/pi-telegram-reactive/updates";
+import { registerTelegramCommand } from "@carlitose86/pi-telegram-reactive/commands";
+import { registerTelegramInboundHandler } from "@carlitose86/pi-telegram-reactive/inbound";
+import { registerTelegramOutboundHandler } from "@carlitose86/pi-telegram-reactive/outbound";
+import { sendTelegramView } from "@carlitose86/pi-telegram-reactive/delivery";
+import { registerTelegramActivityHandler } from "@carlitose86/pi-telegram-reactive/activity";
 import {
   registerTelegramVoiceSynthesisProvider,
   registerTelegramVoiceTranscriptionProvider,
-} from "@llblab/pi-telegram/voice";
+} from "@carlitose86/pi-telegram-reactive/voice";
 ```
 
-`0.12.0` intentionally removes the published `@llblab/pi-telegram/lib/*.ts` compatibility wildcard. Integrations should use the public API domain subpaths above. Package exports point at `/api/*.ts` membranes that re-export only stable companion-extension symbols; implementation modules under `lib/` remain package-private. Telegram command extensions use `/commands` as an explicit opt-in surface instead of automatically exposing arbitrary Pi slash commands to Telegram. See [Public API Smoke Examples](#public-api-smoke-examples) below for minimal companion-extension patterns that avoid implementation imports.
+Upstream `0.12.0` removed the published `@llblab/pi-telegram/lib/*.ts` compatibility wildcard; this preview inherits that private-implementation boundary. Integrations should use the public API domain subpaths above. Package exports point at `/api/*.ts` membranes that re-export only stable companion-extension symbols; implementation modules under `lib/` remain package-private. Telegram command extensions use `/commands` as an explicit opt-in surface instead of automatically exposing arbitrary Pi slash commands to Telegram. See [Public API Smoke Examples](#public-api-smoke-examples) below for minimal companion-extension patterns that avoid implementation imports.
 
 ## Pure Assistant Controls
 
@@ -74,7 +74,7 @@ This command surface is a mobile companion subset, not a raw terminal-command br
 
 ### Tools and assistant-authored actions
 
-Every assistant-authored HTML comment is transport-private on Telegram: previews and final replies remove `<!-- … -->` blocks regardless of Markdown nesting or which extension owns the comment, while only recognized top-level column-zero comments can activate voice or buttons. Unclosed comment tails are withheld and a comment-only result sends no text message; Pi's terminal transcript remains unchanged.
+Every assistant-authored HTML comment is transport-private on Telegram: previews and final replies remove `<!-- … -->` blocks regardless of Markdown nesting or which extension owns the comment, while only recognized top-level column-zero comments can activate voice or buttons. Unclosed comment tails are withheld and a comment-only result sends no Telegram text message. Stored Pi messages remain unchanged. On Pi 1.0.0 the package's read-only Markdown transformer projects assistant controls into numbered terminal choices without a bot/token. Users reply normally; disabled cells and bound methods remain visibly unavailable. There is no waiting question, token widget, injected input or timed modal.
 
 - `telegram_bind({ app, script, argument? } | { app, method, argument? })` installs and initializes one canonical managed Generative App module under `<agent-dir>/genapps/<app>/<app>.mjs`, or invokes one named method on an installed app. Installation rejects silent replacement and noncanonical/symlink sources. Methods receive immutable JSON state, one optional JSON argument, cancellation, revision, and a bounded non-shell process port; successful state changes commit to `state.json` plus `states.jsonl`, while output-only methods leave history unchanged. After one-shot `tgbtn` resolution, a complete `app::method` or `app::method(<strict JSON>)` prompt invokes the installed app before Pi queue admission and sends its planned Markdown/buttons directly; malformed or failed bound actions never fall back to a model prompt. Direct app-output buttons retain hidden source revisions and stale actions fail before method execution; sibling processes serialize transitions and recover dead lock owners. Bound actions send a fresh message by default and retain the clicked button's selected state on its prior surface. A result may opt into `viewMode: "edit"` to replace the callback message and keyboard in place, with one fresh-send fallback only for that explicit action. Agent-mediated initial-surface revisions, process-birth lock proof, automatic refresh, and voice output remain open.
 - `telegram_attach(paths, chat_id?, thread_id?, caption?)` is the stable artifact delivery tool for generated files. During Telegram turns it queues files before any separate final text; with `assistant.rendering: "rich"`, exactly one PNG/JPEG, MP4, or MP3 artifact plus non-empty final Markdown can become one reply-anchored Rich Message with media first. HTML mode, multiple/unsupported files, Guest Mode, and voice outputs retain their established paths. Outside Telegram turns the tool sends files directly to the paired/default chat, the registered follower's assigned thread, or an explicit `chat_id` plus optional `thread_id` when this Pi instance owns `/telegram-connect` or is registered with the multi-instance bus.
@@ -234,7 +234,7 @@ The 0.21 platform boundary lets a public-import-only consumer own reasoning, int
 
 ## Commands
 
-Import from `@llblab/pi-telegram/commands`. This registers Telegram slash commands only; it does not expose Pi slash commands and is unrelated to command-template handlers.
+Import from `@carlitose86/pi-telegram-reactive/commands`. This registers Telegram slash commands only; it does not expose Pi slash commands and is unrelated to command-template handlers.
 
 ```ts
 const off = registerTelegramCommand({
@@ -262,7 +262,7 @@ Core commands stay reserved for bridge lifecycle, transport ownership, queue saf
 
 ## Sections
 
-Import from `@llblab/pi-telegram/sections`.
+Import from `@carlitose86/pi-telegram-reactive/sections`.
 
 ```ts
 const unregister = registerTelegramSection({
@@ -298,7 +298,7 @@ Full behavior: [Extension Sections](./sections.md).
 
 ## Telegram Delivery API
 
-Import from `@llblab/pi-telegram/delivery`.
+Import from `@carlitose86/pi-telegram-reactive/delivery`.
 
 ```ts
 const sent = await sendTelegramView(
@@ -319,7 +319,7 @@ Full behavior: [Telegram Delivery API](./delivery.md).
 
 ## Telegram Activity API
 
-Import from `@llblab/pi-telegram/activity`.
+Import from `@carlitose86/pi-telegram-reactive/activity`.
 
 ```ts
 const off = registerTelegramActivityHandler({
@@ -340,7 +340,7 @@ Full behavior and consumer policy examples: [Telegram Activity API](./activity.m
 
 ## Status Lines
 
-Import from `@llblab/pi-telegram/status`.
+Import from `@carlitose86/pi-telegram-reactive/status`.
 
 ```ts
 const off = registerTelegramStatusLineProvider(
@@ -361,7 +361,7 @@ Contract:
 
 ## Updates
 
-Import `registerTelegramUpdateHandler`, `TelegramUpdateExecutionFence`, and the advanced `getTelegramUpdateExecutionFence`, `createTelegramUpdateExecutionFenceGuard`, `carryTelegramUpdateExecutionFence`, and `assertTelegramUpdateExecutionCurrent` helpers from `@llblab/pi-telegram/updates`.
+Import `registerTelegramUpdateHandler`, `TelegramUpdateExecutionFence`, and the advanced `getTelegramUpdateExecutionFence`, `createTelegramUpdateExecutionFenceGuard`, `carryTelegramUpdateExecutionFence`, and `assertTelegramUpdateExecutionCurrent` helpers from `@carlitose86/pi-telegram-reactive/updates`.
 
 ```ts
 const off = registerTelegramUpdateHandler(async (update, execution) => {
@@ -380,7 +380,7 @@ Full behavior: [Updates](./updates.md).
 
 ## Inbound
 
-Import from `@llblab/pi-telegram/inbound`.
+Import from `@carlitose86/pi-telegram-reactive/inbound`.
 
 ```ts
 const off = registerTelegramInboundHandler("document", async ({ file }) => {
@@ -401,7 +401,7 @@ Full behavior: [Inbound Handlers](./inbound.md).
 
 ## Outbound
 
-Import from `@llblab/pi-telegram/outbound`.
+Import from `@carlitose86/pi-telegram-reactive/outbound`.
 
 ```ts
 const off = registerTelegramOutboundHandler("text", async (text) => {
@@ -415,7 +415,7 @@ Full behavior: [Outbound Handlers](./outbound.md).
 
 ## Voice Providers
 
-Import from `@llblab/pi-telegram/voice`.
+Import from `@carlitose86/pi-telegram-reactive/voice`.
 
 ```ts
 const offStt = registerTelegramVoiceTranscriptionProvider(
@@ -440,13 +440,13 @@ Full behavior: [Voice Integration](./voice.md).
 
 ## Public API Smoke Examples
 
-Minimal companion-extension examples that import only stable `@llblab/pi-telegram/*` public membranes. Copy one into an extension `index.ts`, load it beside `pi-telegram`, and verify that it starts without importing any `@llblab/pi-telegram/lib/*` implementation path.
+Minimal companion-extension examples that import only stable `@carlitose86/pi-telegram-reactive/*` public membranes. Copy one into an extension `index.ts`, load it beside `pi-telegram`, and verify that it starts without importing any `@carlitose86/pi-telegram-reactive/lib/*` implementation path.
 
 ### Extension Sections
 
 ```ts
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerTelegramSection } from "@llblab/pi-telegram/sections";
+import { registerTelegramSection } from "@carlitose86/pi-telegram-reactive/sections";
 
 export default function demoSection(pi: ExtensionAPI) {
   let unregister: (() => void) | undefined;
@@ -474,7 +474,7 @@ export default function demoSection(pi: ExtensionAPI) {
 
 ```ts
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerTelegramUpdateHandler } from "@llblab/pi-telegram/updates";
+import { registerTelegramUpdateHandler } from "@carlitose86/pi-telegram-reactive/updates";
 
 export default function demoUpdates(pi: ExtensionAPI) {
   let unregister: (() => void) | undefined;
@@ -496,7 +496,7 @@ export default function demoUpdates(pi: ExtensionAPI) {
 
 ```ts
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerTelegramInboundHandler } from "@llblab/pi-telegram/inbound";
+import { registerTelegramInboundHandler } from "@carlitose86/pi-telegram-reactive/inbound";
 
 export default function demoInbound(pi: ExtensionAPI) {
   let unregister: (() => void) | undefined;
@@ -518,7 +518,7 @@ export default function demoInbound(pi: ExtensionAPI) {
 
 ```ts
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerTelegramOutboundHandler } from "@llblab/pi-telegram/outbound";
+import { registerTelegramOutboundHandler } from "@carlitose86/pi-telegram-reactive/outbound";
 
 export default function demoOutbound(pi: ExtensionAPI) {
   let unregister: (() => void) | undefined;
@@ -543,7 +543,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   registerTelegramVoiceSynthesisProvider,
   registerTelegramVoiceTranscriptionProvider,
-} from "@llblab/pi-telegram/voice";
+} from "@carlitose86/pi-telegram-reactive/voice";
 
 export default function demoVoice(pi: ExtensionAPI) {
   let unregisterTts: (() => void) | undefined;
@@ -580,15 +580,15 @@ async function synthesizeDemoOgg(_text: string): Promise<string> {
 
 ### Smoke Checklist
 
-- The extension imports only public package membranes: `@llblab/pi-telegram`, `/commands`, `/sections`, `/status`, `/delivery`, `/activity`, `/updates`, `/inbound`, `/outbound`, `/voice`, or `/keyboard`.
-- It does not import `@llblab/pi-telegram/lib/*`.
+- The extension imports only public package membranes: `@carlitose86/pi-telegram-reactive`, `/commands`, `/sections`, `/status`, `/delivery`, `/activity`, `/updates`, `/inbound`, `/outbound`, `/voice`, or `/keyboard`.
+- It does not import `@carlitose86/pi-telegram-reactive/lib/*`.
 - It registers on `session_start` and disposes on `session_shutdown`.
 - Stable high-level registrations use durable ids.
 - Failures are visible during manual testing through `/telegram-status` or extension-owned logging.
 
 ## Callback Namespaces
 
-Owned prefixes are reserved by `pi-telegram`: `compact:`, `new:`, `tgbtn:`, `menu:`, `model:`, `thinking:`, `status:`, `queue:`, `settings:`, and `section:`.
+Owned prefixes are reserved by `pi-telegram`: `compact:`, `new:`, `question:`, `tgbtn:`, `menu:`, `model:`, `thinking:`, `status:`, `queue:`, `settings:`, and `section:`.
 
 Companion extensions should use their own short prefix for raw callbacks or use `ctx.callbackData()` inside sections. Unknown unowned callbacks may be forwarded to Pi as `[callback] <data>` after built-in handlers decline them.
 

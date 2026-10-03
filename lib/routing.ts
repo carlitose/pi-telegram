@@ -615,6 +615,7 @@ export interface TelegramInboundRouteRuntimeDeps<
   ) => Promise<false | "new" | "edit">;
   inboundHandlerRuntime: TelegramInboundHandlerRuntime<TContext>;
   consumeRemoteDialogReply?: (message: TMessage, ctx: TContext) => boolean;
+  consumeRemoteDialogCallback?: (query: TCallbackQuery, ctx: TContext) => string | undefined;
   threadStore?: Threads.TelegramTopicTargetStore;
   runWorkspaceOperation?: <T>(
     input: {
@@ -725,6 +726,7 @@ const TELEGRAM_OWNED_CALLBACK_PREFIXES = [
   "menu:",
   "model:",
   "new:",
+  "question:",
   "queue:",
   "section:",
   "settings:",
@@ -1856,6 +1858,16 @@ export function createTelegramInboundRouteRuntime<
     const assertExecutionCurrent =
       Updates.createTelegramUpdateExecutionFenceGuard(query);
     assertExecutionCurrent();
+    if (query.data?.startsWith("question:")) {
+      // Settle the producer before ACK; expired questions never become queued prompts.
+      const notice = deps.consumeRemoteDialogCallback?.(query, ctx) ?? "🚫 Question no longer available.";
+      try {
+        await deps.answerCallbackQuery(query.id, notice);
+      } catch (error) {
+        deps.recordRuntimeEvent?.("telegram", error, { phase: "question-callback-ack" });
+      }
+      return;
+    }
     if (await handleUnboundRerouteRestoreMenuCallback(query, ctx)) return;
     if (await handleUnboundRerouteCallback(query, ctx)) return;
     if (deps.buttonActionStore) {

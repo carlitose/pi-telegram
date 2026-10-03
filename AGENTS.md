@@ -118,7 +118,7 @@ The detailed map is canonical in [`docs/architecture.md`](./docs/architecture.md
 
 ## 6. Public And Integration Boundaries
 
-- Companion extensions use documented package subpaths such as `@llblab/pi-telegram/sections`, `/delivery`, `/voice`, `/inbound`, `/outbound`, and `/updates`; never import `lib/*.ts`.
+- Companion extensions use documented package subpaths such as `@carlitose86/pi-telegram-reactive/sections`, `/delivery`, `/voice`, `/inbound`, `/outbound`, and `/updates`; never import `lib/*.ts`.
 - Low-level handler buses have no caller-supplied ids; high-level registries use stable identities. Imperative delivery resolves the current runtime on every call and returns generation-bound logical handles rather than captured Pi contexts.
 - Extension sections receive only documented context ports. They do not access raw bot clients/filesystems or run a second polling loop; unregister on shutdown.
 - Unknown callback data may reach extension handlers only after built-in namespaces decline it. Follow [`docs/callback-namespaces.md`](./docs/callback-namespaces.md).
