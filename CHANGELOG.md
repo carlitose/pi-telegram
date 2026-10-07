@@ -4,7 +4,11 @@
 
 ## Unreleased
 
-No additional changes beyond the preview candidate below.
+No additional changes beyond the preview candidates below.
+
+## 0.1.0-next.1: Dropped-reply diagnostics
+
+- `Dropped final replies`: When the bridge deliberately does not deliver a final reply that had text, attachments or an error notice, because the session was replaced, the transport changed or the active turn moved, it now records one redacted `delivery` event with a `final-reply-*` phase instead of leaving no trace. Runs with nothing to publish stay silent. A regression covers final replies after mid-run steers.
 
 ## 0.1.0-next.0: Pi Telegram Reactive preview candidate
 

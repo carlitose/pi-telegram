@@ -17,7 +17,7 @@ Pi Telegram Reactive is the distinct `@carlitose86/pi-telegram-reactive` preview
 From npm:
 
 ```bash
-pi install npm:@carlitose86/pi-telegram-reactive@0.1.0-next.0
+pi install npm:@carlitose86/pi-telegram-reactive@0.1.0-next.1
 ```
 
 From git:
