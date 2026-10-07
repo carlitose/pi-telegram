@@ -2181,6 +2181,87 @@ test("Agent end hook does not duplicate an ordinary answer already admitted as a
   assert.equal(events.includes("unexpected:text"), false);
 });
 
+function createDroppedReplyRuntimeDeps(recorded: Array<{ phase: unknown; details: Record<string, unknown> }>) {
+  return {
+    foldQueuedPromptsIntoHistory: false,
+    resetRuntimeState: () => {},
+    updateStatus: () => {},
+    dispatchNextQueuedTelegramTurn: () => {},
+    clearPreview: async () => {},
+    setPreviewPendingText: () => {},
+    finalizeMarkdownPreview: async () => false,
+    sendMarkdownReply: async () => { throw new Error("unexpected reply"); },
+    sendTextReply: async () => { throw new Error("unexpected text"); },
+    sendQueuedAttachments: async () => { throw new Error("unexpected attachment"); },
+    recordRuntimeEvent: (_category: string, _error: unknown, details: Record<string, unknown> = {}) => {
+      recorded.push({ phase: details.phase, details });
+    },
+  };
+}
+
+for (const [phase, active] of [
+  ["final-reply-session-inactive", { session: false, transport: true }],
+  ["final-reply-transport-inactive", { session: true, transport: false }],
+] as const) {
+  test(`Agent end runtime records ${phase} when it drops a final reply`, async () => {
+    const recorded: Array<{ phase: unknown; details: Record<string, unknown> }> = [];
+    await handleTelegramAgentEndRuntime({
+      ...createDroppedReplyRuntimeDeps(recorded),
+      turn: createQueueTestPromptTurn({ chatId: 7, replyToMessageId: 11 }),
+      assistant: { text: "secret final answer" },
+      isSessionActive: () => active.session,
+      isTurnTransportActive: () => active.transport,
+    });
+    assert.deepEqual(recorded.map((entry) => entry.phase), [phase]);
+    assert.equal(JSON.stringify(recorded).includes("secret final answer"), false);
+    assert.equal(recorded[0]?.details.textLength, "secret final answer".length);
+  });
+}
+
+test("Agent end runtime stays silent when an inactive run had nothing to publish", async () => {
+  const recorded: Array<{ phase: unknown; details: Record<string, unknown> }> = [];
+  await handleTelegramAgentEndRuntime({
+    ...createDroppedReplyRuntimeDeps(recorded),
+    turn: createQueueTestPromptTurn({ chatId: 7, replyToMessageId: 11 }),
+    assistant: {},
+    isSessionActive: () => false,
+  });
+  assert.deepEqual(recorded, []);
+});
+
+test("Agent end hook records a final reply dropped because the active turn changed", async () => {
+  const recorded: Array<{ phase: unknown; details: Record<string, unknown> }> = [];
+  let active: PendingTelegramTurn | undefined = createQueueTestPromptTurn({ chatId: 7, replyToMessageId: 11 });
+  const hook = createTelegramAgentEndHook<PendingTelegramTurn, { id: string }, unknown>({
+    ...createDroppedReplyRuntimeDeps(recorded),
+    getActiveTurn: () => active,
+    extractAssistant: extractRunAssistantMessage,
+    getFoldQueuedPromptsIntoHistory: () => false,
+    requestDeferredDispatchNextQueuedTelegramTurn: () => {},
+    loadConfig: async () => { active = undefined; },
+  });
+  await hook({ messages: [
+    { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "lost answer" }] },
+  ] }, { id: "session" });
+  assert.deepEqual(recorded.map((entry) => entry.phase), ["final-reply-turn-replaced"]);
+});
+
+test("Agent end hook records a Telegram turn reply dropped by an inactive session", async () => {
+  const recorded: Array<{ phase: unknown; details: Record<string, unknown> }> = [];
+  const hook = createTelegramAgentEndHook<PendingTelegramTurn, { id: string }, unknown>({
+    ...createDroppedReplyRuntimeDeps(recorded),
+    getActiveTurn: () => createQueueTestPromptTurn({ chatId: 7, replyToMessageId: 11 }),
+    extractAssistant: extractRunAssistantMessage,
+    getFoldQueuedPromptsIntoHistory: () => false,
+    requestDeferredDispatchNextQueuedTelegramTurn: () => {},
+    isSessionActive: () => false,
+  });
+  await hook({ messages: [
+    { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "lost answer" }] },
+  ] }, { id: "session" });
+  assert.deepEqual(recorded.map((entry) => entry.phase), ["final-reply-session-inactive"]);
+});
+
 test("Agent end runtime edits the Guest Mode ACK message with the failure notice", async () => {
   const events: string[] = [];
   const turn: PendingTelegramTurn = createQueueTestPromptTurn({

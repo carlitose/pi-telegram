@@ -1759,6 +1759,28 @@ export function buildTelegramAgentEndPlan(options: {
   };
 }
 
+/** Records a deliberately undelivered final reply without its content. */
+function recordTelegramDroppedFinalReply(
+  recordRuntimeEvent:
+    | ((category: string, error: unknown, details?: Record<string, unknown>) => void)
+    | undefined,
+  phase: string,
+  turn: PendingTelegramTurn | undefined,
+  content: { text?: string; attachmentCount?: number },
+): void {
+  recordRuntimeEvent?.(
+    "delivery",
+    new Error("Telegram final reply was not delivered."),
+    {
+      phase,
+      hasTurn: !!turn,
+      hasThread: turn?.target?.threadId !== undefined,
+      textLength: content.text?.length ?? 0,
+      attachmentCount: content.attachmentCount ?? 0,
+    },
+  );
+}
+
 export function createTelegramAgentEndHook<
   TTurn extends PendingTelegramTurn,
   TContext,
@@ -1777,7 +1799,18 @@ export function createTelegramAgentEndHook<
     ctx: TContext,
     assistantOverride?: TelegramAgentEndAssistantResult,
   ): Promise<void> => {
-    if (deps.isSessionActive?.(ctx) === false) return;
+    if (deps.isSessionActive?.(ctx) === false) {
+      const activeTurn = deps.getActiveTurn();
+      if (activeTurn) {
+        recordTelegramDroppedFinalReply(
+          deps.recordRuntimeEvent,
+          "final-reply-session-inactive",
+          activeTurn,
+          { attachmentCount: activeTurn.queuedAttachments.length },
+        );
+      }
+      return;
+    }
     const turn = deps.getActiveTurn();
     const extractedAssistant = assistantOverride ?? (turn ? deps.extractAssistant(event.messages) : {});
     const assistant = deps.isAssistantAlreadyPublished?.(extractedAssistant)
@@ -1788,7 +1821,20 @@ export function createTelegramAgentEndHook<
     const scheduleDelivery = reservation?.schedule ?? deps.scheduleActiveTurnDelivery;
     try {
       await deps.loadConfig?.();
-      if (deps.isSessionActive?.(ctx) === false || deps.getActiveTurn() !== turn) return;
+      const sessionInactive = deps.isSessionActive?.(ctx) === false;
+      if (sessionInactive || deps.getActiveTurn() !== turn) {
+        if (hasPublication) {
+          recordTelegramDroppedFinalReply(
+            deps.recordRuntimeEvent,
+            sessionInactive
+              ? "final-reply-session-inactive"
+              : "final-reply-turn-replaced",
+            turn,
+            { text: assistant.text, attachmentCount: turn?.queuedAttachments.length },
+          );
+        }
+        return;
+      }
       await handleTelegramAgentEndRuntime({
         turn,
         assistant,
@@ -1872,9 +1918,32 @@ export async function handleTelegramAgentEndRuntime<
   const hasOutboundArtifacts =
     !!outboundReply?.voiceText || !!outboundReply?.voiceReplies?.length;
   const replyMarkup = outboundReply?.replyMarkup;
-  const isDeliveryActive = (): boolean =>
-    deps.isSessionActive?.() !== false &&
-    (!turn || deps.isTurnTransportActive?.(turn) !== false);
+  const hasPublishableContent =
+    !!finalText ||
+    hasOutboundArtifacts ||
+    (turn?.queuedAttachments.length ?? 0) > 0 ||
+    assistant.stopReason === "error";
+  let dropRecorded = false;
+  // The first failed fence that would lose content leaves one diagnostic event;
+  // without it a dropped final reply is indistinguishable from a sent one.
+  const isDeliveryActive = (): boolean => {
+    const sessionActive = deps.isSessionActive?.() !== false;
+    const transportActive =
+      !turn || deps.isTurnTransportActive?.(turn) !== false;
+    if (sessionActive && transportActive) return true;
+    if (!dropRecorded && hasPublishableContent) {
+      dropRecorded = true;
+      recordTelegramDroppedFinalReply(
+        deps.recordRuntimeEvent,
+        sessionActive
+          ? "final-reply-transport-inactive"
+          : "final-reply-session-inactive",
+        turn,
+        { text: finalText, attachmentCount: turn?.queuedAttachments.length },
+      );
+    }
+    return false;
+  };
   const preview = turn && !turn.guestQueryId ? deps.preparePreviewDelivery?.(isDeliveryActive) : undefined;
   const setPreviewPendingText = preview?.setPreviewPendingText ?? deps.setPreviewPendingText;
   const finalizeMarkdownPreview = preview?.finalizeMarkdownPreview ?? deps.finalizeMarkdownPreview;
