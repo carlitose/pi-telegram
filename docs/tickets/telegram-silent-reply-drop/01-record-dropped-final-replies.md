@@ -25,7 +25,7 @@ Make each non-delivery exit of the final-reply path (`createTelegramAgentEndHook
 - [ ] Existing queue/lifecycle tests stay green; `dist/` is rebuilt.
 
 ## Frontier
-Ready.
+Done: merged in #8 (`298f291`), CI green on Linux, macOS and Windows. Live events appear only after the package is published and installed.
 
 ## Gates
 As the parent spec: one PR to `release/reactive-next-0`, 3 hours per attempt, at most 2 attempts; the agent may merge on green checks; npm publication by the user; installation only after the `dbh-crew` lot.

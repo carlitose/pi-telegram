@@ -26,7 +26,7 @@ A lifecycle-level test with real bridge wiring and fake Pi events that replays t
 - [ ] `npm run typecheck`, `npm test` and `npm run build:check` pass.
 
 ## Frontier
-Blocked by ticket 01.
+Investigated, not reproduced. In the classic single-process runtime the final reply reaches the turn target once with 0, 1 and 2 mid-run steers, including one queued at the final `turn_end` (regression in `tests/integration.test.ts`). Not exercised: registered-follower delivery through the leader and a prompt-button origin, both present in the incident. Open until a live recurrence yields ticket 01's `final-reply-*` event, which names the failing fence.
 
 ## Gates
 As the parent spec: one PR to `release/reactive-next-0`, 3 hours per attempt, at most 2 attempts; the agent may merge on green checks; npm publication by the user; installation only after the `dbh-crew` lot.
