@@ -4,7 +4,11 @@
 
 ## Unreleased
 
-No additional changes beyond the preview candidates below.
+No additional changes beyond 0.1.0 below.
+
+## 0.1.0: First stable release
+
+- Same code as `0.1.0-next.1`, published as a stable version so that npm search, and the pi.dev package gallery built on it, list it, and `latest` no longer points to a prerelease.
 
 ## 0.1.0-next.1: Dropped-reply diagnostics
 
