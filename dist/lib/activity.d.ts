@@ -220,3 +220,33 @@ export declare function createTelegramAssistantOutputRuntime<TAuthority = undefi
     send: (event: TelegramAssistantSegmentEvent, authority: TAuthority, isAuthorityActive: () => boolean) => Promise<void>;
     recordFailure?: (event: TelegramAssistantSegmentEvent, error: unknown) => void;
 }): TelegramAssistantOutputRuntime;
+export interface TelegramLocalPromptInput {
+    source: TelegramActivityInputSource;
+    text: string | undefined;
+    imageCount: number;
+}
+export interface TelegramLocalPromptEcho {
+    text: string;
+    imageCount: number;
+}
+export interface TelegramLocalPromptEchoRuntime {
+    start: () => void;
+    accept: (input: TelegramLocalPromptInput) => void;
+    waitForIdle: () => Promise<void>;
+    stop: () => void;
+}
+/**
+ * Admit what the operator typed at the terminal into the companion projection.
+ * Only `interactive` input is echoed: extension-injected prompts (including the
+ * bridge's own Telegram turns and steers) and RPC clients are not the operator
+ * typing. Echoes join the shared publication order ahead of the reply they cause
+ * and revalidate the same exact authority before sending.
+ */
+export declare function createTelegramLocalPromptEchoRuntime<TAuthority = undefined>(deps: {
+    enqueue?: TelegramActivityPublicationRuntime["enqueue"];
+    captureAuthority?: () => TAuthority;
+    isAuthorityActive?: (authority: TAuthority) => boolean;
+    canDeliver: () => boolean;
+    send: (echo: TelegramLocalPromptEcho, authority: TAuthority, isAuthorityActive: () => boolean) => Promise<void>;
+    recordFailure?: (error: unknown) => void;
+}): TelegramLocalPromptEchoRuntime;

@@ -4,8 +4,63 @@
  * Owns direct pi SDK imports and exposes narrow bridge-facing helpers/types for the extension composition layer
  */
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
-import { type AgentEndEvent, type AgentSettledEvent, type AgentStartEvent, type BeforeAgentStartEvent, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type InputEvent, type MessageEndEvent, type SessionBeforeCompactEvent, type SessionCompactEvent, type SessionShutdownEvent, type SessionStartEvent, type SlashCommandInfo, type UIPromptEndEvent, type UIPromptStartEvent } from "@earendil-works/pi-coding-agent";
-export type { AgentEndEvent, AgentSettledEvent, AgentStartEvent, AssistantMessageEvent, BeforeAgentStartEvent, ExtensionAPI, ExtensionCommandContext, ExtensionContext, InputEvent, MessageEndEvent, SessionBeforeCompactEvent, SessionCompactEvent, SessionShutdownEvent, SessionStartEvent, SlashCommandInfo, UIPromptEndEvent, UIPromptStartEvent, };
+import { type AgentEndEvent, type AgentSettledEvent, type AgentStartEvent, type BeforeAgentStartEvent, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type InputEvent, type MessageEndEvent, type SessionBeforeCompactEvent, type SessionCompactEvent, type SessionShutdownEvent, type SessionStartEvent, type SlashCommandInfo, type TurnEndEvent, type UIPromptEndEvent, type UIPromptStartEvent } from "@earendil-works/pi-coding-agent";
+export type { AgentEndEvent, AgentSettledEvent, AgentStartEvent, AssistantMessageEvent, BeforeAgentStartEvent, ExtensionAPI, ExtensionCommandContext, ExtensionContext, InputEvent, MessageEndEvent, SessionBeforeCompactEvent, SessionCompactEvent, SessionShutdownEvent, SessionStartEvent, SlashCommandInfo, TurnEndEvent, UIPromptEndEvent, UIPromptStartEvent, };
+export type PiRemoteDialogRequest = {
+    type: "ui_prompt_request";
+    requestId: string;
+    sessionId: string;
+    signal: AbortSignal;
+    title: string;
+} & ({
+    kind: "select";
+    options: string[];
+} | {
+    kind: "confirm";
+    message: string;
+} | {
+    kind: "input";
+    placeholder?: string;
+} | {
+    kind: "editor";
+    prefill?: string;
+});
+export type PiRemoteDialogResponse = {
+    action: "pass";
+} | {
+    action: "handled";
+    value: string | boolean | undefined;
+};
+export declare function registerPiRemoteDialogResponder(pi: ExtensionAPI, handler: (event: PiRemoteDialogRequest, ctx: ExtensionContext) => Promise<PiRemoteDialogResponse>): void;
+export declare const PI_CODE_QUESTION_CHANNEL = "pi-code:question:v1";
+export type PiCodeQuestionOutcome = {
+    action: "answer";
+    indices: number[];
+} | {
+    action: "text";
+    text: string;
+} | {
+    action: "cancel";
+} | {
+    action: "pass";
+};
+export interface PiCodeQuestionOffer {
+    version: 1;
+    requestId: string;
+    sessionId: string;
+    question: string;
+    header?: string;
+    options: Array<{
+        label: string;
+        description?: string;
+    }>;
+    multiSelect: boolean;
+    allowFreeText: boolean;
+    signal: AbortSignal;
+    claim(): ((outcome: PiCodeQuestionOutcome) => boolean) | undefined;
+    touch(): boolean;
+}
+export declare function registerPiCodeQuestionResponder(pi: ExtensionAPI, getContext: () => ExtensionContext | undefined, handler: (offer: PiCodeQuestionOffer, ctx: ExtensionContext) => void): void;
 export interface SessionCompactFailedEvent {
     type: "session_compact_failed";
     reason: "manual" | "threshold" | "overflow";

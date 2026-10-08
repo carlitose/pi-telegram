@@ -258,7 +258,7 @@ test("Pi resolver preserves checkout Skills and package filters with package pro
     await mkdir(join(checkoutRoot, "dist", "skills", "telegram-bridge"), { recursive: true });
     await mkdir(cwd, { recursive: true });
     await writeFile(join(checkoutRoot, "package.json"), JSON.stringify({
-      name: "@llblab/pi-telegram-checkout-fixture",
+      name: "@carlitose86/pi-telegram-reactive-checkout-fixture",
       pi: {
         extensions: ["./dist/pi-telegram/index.js"],
         skills: ["./dist/skills"],
@@ -302,7 +302,7 @@ test("Pi resolver preserves checkout Skills and package filters with package pro
     await mkdir(dirname(managedEntry), { recursive: true });
     await mkdir(dirname(managedSkill), { recursive: true });
     await writeFile(join(managedRoot, "package.json"), JSON.stringify({
-      name: "@llblab/pi-telegram-managed-fixture",
+      name: "@carlitose86/pi-telegram-reactive-managed-fixture",
       pi: {
         extensions: ["./dist/pi-telegram/index.js"],
         skills: ["./dist/skills"],

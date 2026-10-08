@@ -24,15 +24,26 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: >-
+          node --input-type=module -e "import { execFileSync } from 'node:child_process'; const actual = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); if (actual !== process.env.EXPECTED_SHA) throw new Error('Exact checkout mismatch'); console.log('Verified exact checkout ' + actual);"
       - name: Set up Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: 22.19.0
+          node-version: 24
           cache: npm
       - name: Install dependencies
         run: npm ci
       - name: Build distributive
         run: npm run build
+      - name: Check reproducible distributive
+        run: npm run build:check
+      - name: Check isolated runtime import
+        run: npm run check
       - name: Run typecheck
         run: npm run typecheck
       - name: Run Windows bus lifecycle probes

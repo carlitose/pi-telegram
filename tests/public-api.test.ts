@@ -30,19 +30,21 @@ test("Public package subpaths expose the stable extension API", async () => {
     sections,
     status,
     voice,
+    controls,
     keyboard,
   ] = await Promise.all([
-    import("@llblab/pi-telegram"),
-    import("@llblab/pi-telegram/inbound"),
-    import("@llblab/pi-telegram/outbound"),
-    import("@llblab/pi-telegram/delivery"),
-    import("@llblab/pi-telegram/activity"),
-    import("@llblab/pi-telegram/updates"),
-    import("@llblab/pi-telegram/commands"),
-    import("@llblab/pi-telegram/sections"),
-    import("@llblab/pi-telegram/status"),
-    import("@llblab/pi-telegram/voice"),
-    import("@llblab/pi-telegram/keyboard"),
+    import("@carlitose86/pi-telegram-reactive"),
+    import("@carlitose86/pi-telegram-reactive/inbound"),
+    import("@carlitose86/pi-telegram-reactive/outbound"),
+    import("@carlitose86/pi-telegram-reactive/delivery"),
+    import("@carlitose86/pi-telegram-reactive/activity"),
+    import("@carlitose86/pi-telegram-reactive/updates"),
+    import("@carlitose86/pi-telegram-reactive/commands"),
+    import("@carlitose86/pi-telegram-reactive/sections"),
+    import("@carlitose86/pi-telegram-reactive/status"),
+    import("@carlitose86/pi-telegram-reactive/voice"),
+    import("@carlitose86/pi-telegram-reactive/controls"),
+    import("@carlitose86/pi-telegram-reactive/keyboard"),
   ]);
 
   assert.deepEqual(Object.keys(root), ["default"]);
@@ -87,29 +89,33 @@ test("Public package subpaths expose the stable extension API", async () => {
     "registerTelegramVoiceTranscriptionProvider",
     "shouldSuppressPreviewForVoice",
   ]);
+  assert.deepEqual(Object.keys(controls), ["projectAssistantPromptControls"]);
+  assert.deepEqual(controls.projectAssistantPromptControls("<!-- telegram_button {Run|run} -->").rows, [
+    [{ label: "Run", prompt: "run", disabled: false }],
+  ]);
   assert.deepEqual(Object.keys(keyboard), []);
 });
 
-test("Activity API declares the Pi lifecycle compatibility floor", async () => {
+test("Preview declares the verified Pi host target without broad compatibility", async () => {
   const packageJson = JSON.parse(
     await readFile(new URL("../package.json", import.meta.url), "utf8"),
   ) as { peerDependencies?: Record<string, string> };
   assert.equal(
     packageJson.peerDependencies?.["@earendil-works/pi-coding-agent"],
-    ">=0.84.4",
+    "1.0.0",
   );
   assert.equal(
     packageJson.peerDependencies?.["@earendil-works/pi-agent-core"],
-    ">=0.84.4",
+    "1.0.0",
   );
   assert.equal(
     packageJson.peerDependencies?.["@earendil-works/pi-ai"],
-    ">=0.84.4",
+    "1.0.0",
   );
 });
 
 test("Package-private lib implementation paths are not exported", async () => {
-  await assertPackagePathNotExported("@llblab/pi-telegram/lib/updates.ts");
-  await assertPackagePathNotExported("@llblab/pi-telegram/lib/sections.ts");
-  await assertPackagePathNotExported("@llblab/pi-telegram/api/updates.ts");
+  await assertPackagePathNotExported("@carlitose86/pi-telegram-reactive/lib/updates.ts");
+  await assertPackagePathNotExported("@carlitose86/pi-telegram-reactive/lib/sections.ts");
+  await assertPackagePathNotExported("@carlitose86/pi-telegram-reactive/api/updates.ts");
 });

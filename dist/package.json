@@ -1,11 +1,12 @@
 {
-  "name": "@llblab/pi-telegram",
-  "version": "0.51.6",
+  "name": "@carlitose86/pi-telegram-reactive",
+  "version": "0.1.0",
   "private": false,
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "tag": "next"
   },
-  "description": "Telegram runtime adapter for Pi",
+  "description": "Pi Telegram Reactive — standalone Telegram runtime adapter for Pi",
   "keywords": [
     "pi-package",
     "pi",
@@ -17,14 +18,14 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/llblab/pi-telegram.git"
+    "url": "https://github.com/carlitose/pi-telegram.git"
   },
-  "homepage": "https://github.com/llblab/pi-telegram",
+  "homepage": "https://github.com/carlitose/pi-telegram",
   "bugs": {
-    "url": "https://github.com/llblab/pi-telegram/issues"
+    "url": "https://github.com/carlitose/pi-telegram/issues"
   },
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=24 <25"
   },
   "scripts": {
     "test": "node --experimental-strip-types --test --test-concurrency=4 --test-reporter=dot tests/*.test.ts",
@@ -34,7 +35,7 @@
     "build:check": "node scripts/build-dist.mjs --check",
     "prepack": "npm run build",
     "check": "node -e \"await import('./dist/pi-telegram/index.js'); console.log('pi-telegram: extension import ok')\"",
-    "audit": "npm audit --omit=peer",
+    "audit": "node scripts/audit-owned.mjs",
     "audit:host": "npm audit",
     "pack:check": "npm pack --dry-run",
     "validate": "npm run build:check && npm run typecheck && npm test && npm run audit && npm run check && npm run pack:check"
@@ -51,6 +52,9 @@
     "docs/",
     "scripts/",
     "skills/",
+    ".agents/skills/",
+    "LICENSE",
+    "NOTICE",
     "screenshot.png"
   ],
   "exports": {
@@ -94,6 +98,10 @@
       "types": "./dist/api/voice.d.ts",
       "default": "./dist/api/voice.js"
     },
+    "./controls": {
+      "types": "./dist/api/controls.d.ts",
+      "default": "./dist/api/controls.js"
+    },
     "./keyboard": {
       "types": "./dist/api/keyboard.d.ts",
       "default": "./dist/api/keyboard.js"
@@ -106,15 +114,18 @@
     "skills": [
       "./dist/skills"
     ],
-    "image": "https://raw.githubusercontent.com/llblab/pi-telegram/main/screenshot.png"
+    "image": "https://raw.githubusercontent.com/carlitose/pi-telegram/main/screenshot.png"
   },
   "peerDependencies": {
-    "@earendil-works/pi-agent-core": ">=0.84.4",
-    "@earendil-works/pi-ai": ">=0.84.4",
-    "@earendil-works/pi-coding-agent": ">=0.84.4",
+    "@earendil-works/pi-agent-core": "1.0.0",
+    "@earendil-works/pi-ai": "1.0.0",
+    "@earendil-works/pi-coding-agent": "1.0.0",
     "@sinclair/typebox": "*"
   },
   "devDependencies": {
+    "@earendil-works/pi-agent-core": "1.0.0",
+    "@earendil-works/pi-ai": "1.0.0",
+    "@earendil-works/pi-coding-agent": "1.0.0",
     "@types/node": "latest",
     "typescript": "latest"
   }

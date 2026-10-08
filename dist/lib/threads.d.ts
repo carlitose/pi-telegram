@@ -314,6 +314,8 @@ export interface TelegramTopicTargetStoreOptions {
     canPersist?: () => boolean;
     commitPersist?: (commit: () => void) => boolean;
     getExternalReservedSlots?: () => readonly string[];
+    /** The epoch of the leader lock this runtime owns, or undefined when it owns none. */
+    getCurrentLeaderEpoch?: () => number | string | undefined;
 }
 export interface TelegramTopicTargetProvisionerDeps {
     topicChatId: number;
@@ -394,6 +396,21 @@ export declare function getTelegramThreadOwnerKey(owner: TelegramThreadOwner): s
 export declare function getTelegramThreadOwnerFromProfileKey(profileKey: string): TelegramThreadOwner;
 export declare function normalizeTelegramSessionReplacementIntent(value: unknown): TelegramSessionReplacementIntent | undefined;
 export declare function isSameTelegramProcessInstance(left: string | undefined, right: string | undefined): boolean;
+/**
+ * A displaced leader's `createForumTopic` is one request that is not retried. Undici's
+ * default header and body timeouts are 300 s each, and there is at most one IPv4 fallback,
+ * so the request ends well within this bound. Only the https path with a forced network
+ * family has no proven limit.
+ */
+export declare const TELEGRAM_THREAD_ORPHANED_PROVISION_TTL_MS: number;
+/**
+ * An intent is orphaned when it has no target, is not ambiguous, carries a leader epoch that
+ * is no longer current, and is older than the orphan bound. It can never gain a topic: the
+ * displaced provisioner is fenced, and there is no recovery evidence to adopt. The live
+ * leader's own intents never qualify, so they still cannot expire into a duplicate create.
+ * The epoch is read last, because it comes from the lock file.
+ */
+export declare function isTelegramPendingProvisionOrphaned(provision: TelegramThreadPendingProvision, nowMs: number, getCurrentLeaderEpoch: () => number | string | undefined): boolean;
 export declare function createTelegramTopicTargetStore(options: TelegramTopicTargetStoreOptions): TelegramTopicTargetStore;
 export declare function normalizeTelegramTopicTargetThreadName(threadName: string): string;
 export declare function getTelegramTopicIdentityName(threadName: string): string;

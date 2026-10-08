@@ -614,6 +614,8 @@ export interface TelegramInboundRouteRuntimeDeps<
     ctx: TContext,
   ) => Promise<false | "new" | "edit">;
   inboundHandlerRuntime: TelegramInboundHandlerRuntime<TContext>;
+  consumeRemoteDialogReply?: (message: TMessage, ctx: TContext) => boolean;
+  consumeRemoteDialogCallback?: (query: TCallbackQuery, ctx: TContext) => string | undefined;
   threadStore?: Threads.TelegramTopicTargetStore;
   runWorkspaceOperation?: <T>(
     input: {
@@ -724,6 +726,7 @@ const TELEGRAM_OWNED_CALLBACK_PREFIXES = [
   "menu:",
   "model:",
   "new:",
+  "question:",
   "queue:",
   "section:",
   "settings:",
@@ -1855,6 +1858,16 @@ export function createTelegramInboundRouteRuntime<
     const assertExecutionCurrent =
       Updates.createTelegramUpdateExecutionFenceGuard(query);
     assertExecutionCurrent();
+    if (query.data?.startsWith("question:")) {
+      // Settle the producer before ACK; expired questions never become queued prompts.
+      const notice = deps.consumeRemoteDialogCallback?.(query, ctx) ?? "🚫 Question no longer available.";
+      try {
+        await deps.answerCallbackQuery(query.id, notice);
+      } catch (error) {
+        deps.recordRuntimeEvent?.("telegram", error, { phase: "question-callback-ack" });
+      }
+      return;
+    }
     if (await handleUnboundRerouteRestoreMenuCallback(query, ctx)) return;
     if (await handleUnboundRerouteCallback(query, ctx)) return;
     if (deps.buttonActionStore) {
@@ -2343,10 +2356,11 @@ export function createTelegramInboundRouteRuntime<
   const promptEnqueue = async (
     messages: TMessage[],
     ctx: TContext,
+    options?: Queue.TelegramPromptEnqueueOptions,
   ): Promise<Queue.PendingTelegramTurn> => {
     return promptEnqueueController.enqueue(messages, ctx, (turn) => {
       reportQueueAdmission(messages, turn.admissionReceipts ?? []);
-    });
+    }, options);
   };
   const sendUnboundRerouteChooserNow = async (
     messages: TMessage[],
@@ -2713,6 +2727,18 @@ export function createTelegramInboundRouteRuntime<
     enqueueTurn: async (messages, ctx) => {
       await promptEnqueue(messages, ctx);
     },
+    enqueueLaterTurn: async (messages, ctx) => {
+      await promptEnqueue(messages, ctx, { deferUntilIdle: true });
+    },
+    replyLaterUsage: async (message) => {
+      Updates.assertTelegramUpdateExecutionCurrent(message);
+      await deps.sendTextReply(
+        message.chat.id,
+        message.message_id,
+        Commands.TELEGRAM_LATER_USAGE_HTML,
+        { parseMode: "HTML", target: Updates.getTelegramMessageTarget(message) },
+      );
+    },
   });
   dispatchReroutedCommandMessages = (messages, ctx) =>
     commandOrPrompt.dispatchMessages(messages, ctx);
@@ -2739,6 +2765,8 @@ export function createTelegramInboundRouteRuntime<
   >({
     ...deps.telegramQueueStore,
     updateStatus: deps.updateStatus,
+    stripDeferredCommand: (text) =>
+      Commands.parseTelegramLaterCommandText(text) ?? text,
   });
   const handleTelegramTopicLifecycleUpdate = async (
     lifecycle: Updates.TelegramTopicLifecycleUpdate<TMessage>,
@@ -2966,6 +2994,7 @@ export function createTelegramInboundRouteRuntime<
       const assertExecutionCurrent =
         Updates.createTelegramUpdateExecutionFenceGuard(message);
       assertExecutionCurrent();
+      if (deps.consumeRemoteDialogReply?.(message as TMessage, ctx)) return;
       if (typeof message.message_thread_id === "number") {
         await deps.handleTelegramThreadTargetObserved?.(
           {
@@ -3052,6 +3081,7 @@ export function createTelegramInboundRouteRuntime<
       const assertExecutionCurrent =
         Updates.createTelegramUpdateExecutionFenceGuard(message);
       assertExecutionCurrent();
+      if (deps.consumeRemoteDialogReply?.(message as TMessage, ctx)) return;
       if (!deps.threadStore) {
         await textDispatch.handleMessage(message as TMessage, ctx);
         return;

@@ -173,6 +173,7 @@ export const TELEGRAM_COMMAND_EMOJI = {
   thread: "🧵",
   next: "⏩",
   continue: "▶️",
+  later: "🔜",
   abort: "⏹️",
   stop: "🟥",
   name: "🏷️",
@@ -282,6 +283,13 @@ export const TELEGRAM_BUILTIN_BOT_COMMANDS: readonly TelegramBotCommandDefinitio
       description: formatTelegramBotCommandDescription(
         "continue",
         "Queue continue prompt",
+      ),
+    },
+    {
+      command: "later",
+      description: formatTelegramBotCommandDescription(
+        "later",
+        "Queue for when Pi is idle",
       ),
     },
     {
@@ -678,6 +686,7 @@ export const TELEGRAM_RESERVED_COMMAND_NAMES = [
   "abort",
   "next",
   "continue",
+  "later",
   "status",
   "queue",
   "compact",
@@ -1162,6 +1171,9 @@ export interface TelegramCommandOrPromptRuntimeDeps<TMessage, TContext> {
   ) => string | undefined;
   replaceMessageText: (message: TMessage, text: string) => TMessage;
   enqueueTurn: (messages: TMessage[], ctx: TContext) => Promise<void>;
+  /** Queues a prompt that never steers into a running Pi run. */
+  enqueueLaterTurn?: (messages: TMessage[], ctx: TContext) => Promise<void>;
+  replyLaterUsage?: (message: TMessage, ctx: TContext) => Promise<void>;
   assertExecutionCurrent?: (message: TMessage) => void;
 }
 
@@ -1248,6 +1260,7 @@ export const TELEGRAM_APP_MENU_INTRO_HTML = [
   `${formatTelegramCommandEmojiPrefix("compact")}/compact — Compact current session`,
   `${formatTelegramCommandEmojiPrefix("new")}/new — Start a new session`,
   `${formatTelegramCommandEmojiPrefix("continue")}/continue — Queue continue prompt`,
+  `${formatTelegramCommandEmojiPrefix("later")}/later — Queue for when Pi is idle`,
   `${formatTelegramCommandEmojiPrefix("next")}/next — Force next turn`,
   `${formatTelegramCommandEmojiPrefix("abort")}/abort — Abort Pi`,
   `${formatTelegramCommandEmojiPrefix("stop")}/stop — Abort Pi & Clear queue`,
@@ -1289,6 +1302,7 @@ function buildTelegramAppMenuIntroHtml(): string {
     `${formatTelegramCommandEmojiPrefix("compact")}/compact — Compact current session`,
     `${formatTelegramCommandEmojiPrefix("new")}/new — Start a new session`,
     `${formatTelegramCommandEmojiPrefix("continue")}/continue — Queue continue prompt`,
+    `${formatTelegramCommandEmojiPrefix("later")}/later — Queue for when Pi is idle`,
     `${formatTelegramCommandEmojiPrefix("next")}/next — Force next turn`,
     ...extensionLines,
     `${formatTelegramCommandEmojiPrefix("abort")}/abort — Abort Pi`,
@@ -1342,6 +1356,24 @@ function formatTelegramCompactionFailure(error: unknown): string {
   return `Compaction failed! ${sentence}`;
 }
 
+export const TELEGRAM_LATER_USAGE_HTML = formatTelegramInformationHeading(
+  getTelegramCommandEmoji("later"),
+  "Usage: /later <message> — queued until Pi is idle, never steered into running work.",
+);
+
+/**
+ * Returns the prompt text of a `/later` command (empty when missing), or
+ * undefined for any other text. Unlike command args, newlines are preserved.
+ */
+export function parseTelegramLaterCommandText(
+  text: string,
+): string | undefined {
+  const trimmed = text.trim();
+  const match = /^\/later(?:@\S+)?(?=\s|$)/i.exec(trimmed);
+  if (!match) return undefined;
+  return trimmed.slice(match[0].length).trim();
+}
+
 export function parseTelegramCommand(
   text: string,
 ): ParsedTelegramCommand | undefined {
@@ -1360,6 +1392,8 @@ export const TELEGRAM_COMMAND_ACTIONS = {
   abort: { kind: "abort", executionMode: "immediate" },
   next: { kind: "next", executionMode: "immediate" },
   continue: { kind: "continue", executionMode: "immediate" },
+  // Command-or-prompt dispatch turns /later into a queued prompt before this map.
+  later: { kind: "ignore", executionMode: "ignored" },
   status: { kind: "status", executionMode: "immediate" },
   queue: { kind: "queue", executionMode: "immediate" },
   compact: { kind: "compact", executionMode: "immediate" },
@@ -1988,7 +2022,31 @@ export function createTelegramCommandOrPromptRuntime<TMessage, TContext>(
         deps.assertExecutionCurrent?.(firstMessage);
         return;
       }
-      const command = parseTelegramCommand(deps.extractRawText(messages));
+      const rawText = deps.extractRawText(messages);
+      const laterText = deps.enqueueLaterTurn
+        ? parseTelegramLaterCommandText(rawText)
+        : undefined;
+      if (laterText !== undefined) {
+        if (!laterText) {
+          await deps.replyLaterUsage?.(firstMessage, ctx);
+          return;
+        }
+        // Strip the command from the exact message carrying it (a media-group
+        // caption need not sit on the first item) and keep every attachment.
+        const commandIndex = messages.findIndex((message) =>
+          deps.extractRawText([message]).length > 0
+        );
+        await deps.enqueueLaterTurn!(
+          messages.map((message, index) =>
+            index === commandIndex
+              ? deps.replaceMessageText(message, laterText)
+              : message
+          ),
+          ctx,
+        );
+        return;
+      }
+      const command = parseTelegramCommand(rawText);
       const handled = await deps.handleCommand(
         command?.name,
         firstMessage,
