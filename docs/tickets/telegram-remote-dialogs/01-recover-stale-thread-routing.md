@@ -24,8 +24,15 @@ Attribute the installed 0.50.1 deleted-Thread failure before changing code. The 
 - [ ] Cross-profile, stale-generation, unrelated and ambiguous errors cannot invalidate a live binding.
 - [ ] If current-head code already passes the regression, record the version difference rather than adding redundant recovery.
 
+## Evidence
+Attributable trace on the installed `@carlitose86/pi-telegram-reactive` 0.1.0 (`ccca9f8`), read-only from the local `tmp/telegram` logs and state:
+- 2026-10-11 17:14:32 (UTC+2): one `topic-target-stale` event for chat `116214222`, Thread `149558` (slot `R`, the local session's bound Thread "Reef"); `syncObservations` records `syncStatus: "deleted"`, `lastReconcileAction: "mark-stale"`.
+- From that moment until 2026-10-12 15:40: 274 more `HTTP 400 message thread not found` failures (`sendMessage`, `sendRichMessage`; categories `api`, `activity`, `proactive-push`, `local-prompt-echo`). No new Thread was provisioned, and the session's binding still pointed at `149558` when it was inspected on 2026-10-12.
+- The failures stopped only after the owner ran `/telegram-disconnect` + `/telegram-connect`, which bound a new Thread.
+- Limit: the failure lines carry only `method`/`activityId`, not the target. The link to `149558` comes from the single stale mark, the time window and the inspected binding. A target field on outbound failure events would make the next trace exact.
+
 ## Frontier
-Investigated but environment-gated: current-head sync/API/bus regression tests pass, and the only recorded stale-target event has a different Thread ID from the current active binding. A safe disposable live test or equivalent attributable trace is needed before claiming a current routing defect or marking this ticket done.
+Unblocked by the evidence above: the stale mark and the active binding are the same Thread, yet the target stayed routable and nothing was reprovisioned. Next: reproduce offline (mark-stale on the bound target, then the next outbound send and reconciliation) and repair the proven gap.
 
 ## Step-by-Step Implementation Plan
 1. Trace direct leader, follower and outbound error recovery, and locate any uncovered path.
