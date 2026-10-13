@@ -37,7 +37,8 @@ type TelegramBeforeAgentStartResult = {
 };
 type TelegramBeforeAgentStartHook = (event: TelegramBeforeAgentStartEvent) => TelegramBeforeAgentStartResult;
 export declare function buildTelegramBridgeSystemPrompt(options: {
-    prompt: string;
+    /** Absent when an extension's custom message started the run (Pi 1.2.0+). */
+    prompt?: string;
     systemPrompt?: TelegramSystemPrompt | null;
     telegramPrefix?: string;
     localSystemPromptSuffix: string;

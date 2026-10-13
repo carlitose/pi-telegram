@@ -133,6 +133,17 @@ test("Prompt helpers keep local prompts on compact safety guidance only", () => 
   assert.doesNotMatch(result, /The current user message came from Telegram/);
 });
 
+test("Prompt hooks accept a run an extension's custom message started, which has no prompt", () => {
+  const event = { type: "before_agent_start", messageType: "custom", systemPrompt: "base" };
+  const result = createTelegramBeforeAgentStartHook()(
+    event as unknown as Parameters<ReturnType<typeof createTelegramBeforeAgentStartHook>>[0],
+  ).systemPrompt;
+  assert.ok(typeof result === "string");
+  assert.match(result, /^base/);
+  assert.match(result, /Telegram session connected/);
+  assert.doesNotMatch(result, /The current user message came from Telegram/);
+});
+
 test("Connection context messages are concise and explicit", () => {
   assert.equal(
     TELEGRAM_CONNECTED_CONTEXT_MESSAGE,
