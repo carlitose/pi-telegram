@@ -167,9 +167,45 @@ function createDirectRuntime(calls: unknown[]): TelegramBridgeApiRuntime {
     deleteMessage: async (chatId, messageId) => {
       calls.push({ kind: "delete", chatId, messageId });
     },
+    setMessageReaction: async (chatId, messageId, emoji) => {
+      calls.push({ kind: "reaction", chatId, messageId, emoji });
+    },
     prepareTempDir: async () => 0,
   };
 }
+
+test("Bus-aware API runtime routes message reactions directly or through the leader", async () => {
+  const directCalls: unknown[] = [];
+  const busCalls: unknown[] = [];
+  let ownsDirect = true;
+  const runtime = createTelegramBusAwareApiRuntime({
+    directRuntime: createDirectRuntime(directCalls),
+    ownsDirect: () => ownsDirect,
+    callFollowerApi: async (method, args) => {
+      busCalls.push({ method, args });
+      return true;
+    },
+  });
+  await runtime.setMessageReaction(1, 9, "👀");
+  ownsDirect = false;
+  await runtime.setMessageReaction(1, 10, "👀");
+  assert.deepEqual(directCalls, [
+    { kind: "reaction", chatId: 1, messageId: 9, emoji: "👀" },
+  ]);
+  assert.deepEqual(busCalls, [
+    {
+      method: "call",
+      args: [
+        "setMessageReaction",
+        {
+          chat_id: 1,
+          message_id: 10,
+          reaction: [{ type: "emoji", emoji: "👀" }],
+        },
+      ],
+    },
+  ]);
+});
 
 test("Bus-aware API runtime uses direct transport while this instance owns Telegram", async () => {
   const directCalls: unknown[] = [];

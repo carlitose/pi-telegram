@@ -55,6 +55,7 @@ import {
   handleTelegramStatusCommand,
   handleTelegramStopCommand,
   parseTelegramCommand,
+  parseTelegramLaterCommandText,
   registerTelegramBotCommands,
   registerTelegramCommand,
   registerTelegramBridgeCommands,
@@ -62,6 +63,7 @@ import {
   TELEGRAM_BOT_COMMANDS,
   TELEGRAM_COMMAND_ACTIONS,
   TELEGRAM_COMMAND_EMOJI,
+  TELEGRAM_LATER_USAGE_HTML,
   TELEGRAM_RESERVED_COMMAND_NAMES,
 } from "../lib/commands.ts";
 import { runTelegramPollLoop } from "../lib/polling.ts";
@@ -151,6 +153,7 @@ test("Command helpers expose Telegram bot command definitions", () => {
     "compact",
     "next",
     "continue",
+    "later",
     "abort",
     "stop",
   ]) {
@@ -170,6 +173,10 @@ test("Command helpers expose Telegram bot command definitions", () => {
     {
       command: "continue",
       description: "▶️ Queue continue prompt",
+    },
+    {
+      command: "later",
+      description: "🔜 Queue for when Pi is idle",
     },
     {
       command: "next",
@@ -262,11 +269,14 @@ test("Command helpers register extension Telegram bot commands when visible", as
       calls.push(commands);
     },
   });
+  const afterNext =
+    TELEGRAM_BOT_COMMANDS.findIndex((command) => command.command === "next") +
+    1;
   assert.deepEqual(calls, [
     [
-      ...TELEGRAM_BOT_COMMANDS.slice(0, 5),
+      ...TELEGRAM_BOT_COMMANDS.slice(0, afterNext),
       { command: "fresh", description: "🆕 Start fresh" },
-      ...TELEGRAM_BOT_COMMANDS.slice(5),
+      ...TELEGRAM_BOT_COMMANDS.slice(afterNext),
     ],
   ]);
   dispose();
@@ -295,6 +305,10 @@ test("Command helpers reject invalid and built-in extension command names", () =
   );
   assert.throws(
     () => registerTelegramCommand({ name: "start", handler: () => {} }),
+    /conflicts with built-in command/,
+  );
+  assert.throws(
+    () => registerTelegramCommand({ name: "later", handler: () => {} }),
     /conflicts with built-in command/,
   );
   clearTelegramExtensionCommands();
@@ -2402,6 +2416,80 @@ test("Command or prompt runtime routes commands before enqueue fallback", async 
     "enqueue:1:/fix_tests now:ctx",
     "command:none:none:hello:ctx",
     "enqueue:1:hello:ctx",
+  ]);
+});
+
+test("Command helpers parse /later prompt text", () => {
+  assert.equal(parseTelegramLaterCommandText("/later check CI"), "check CI");
+  assert.equal(
+    parseTelegramLaterCommandText("  /later@pi_bot  line one\nline two  "),
+    "line one\nline two",
+  );
+  assert.equal(parseTelegramLaterCommandText("/LATER soon"), "soon");
+  assert.equal(parseTelegramLaterCommandText("/later"), "");
+  assert.equal(parseTelegramLaterCommandText("/later   "), "");
+  assert.equal(parseTelegramLaterCommandText("/laterx now"), undefined);
+  assert.equal(parseTelegramLaterCommandText("please /later"), undefined);
+  assert.equal(parseTelegramLaterCommandText("/next"), undefined);
+  assert.equal(isTelegramReservedCommandName("later"), true);
+  assert.deepEqual(buildTelegramCommandAction("later"), {
+    kind: "ignore",
+    executionMode: "ignored",
+  });
+  assert.match(TELEGRAM_LATER_USAGE_HTML, /Usage: \/later &lt;message&gt;/);
+});
+
+test("Command or prompt runtime queues /later text and captions for idle dispatch", async () => {
+  const events: string[] = [];
+  const runtime = createTelegramCommandOrPromptRuntime<
+    { id: number; text?: string; photo?: boolean },
+    { id: string }
+  >({
+    extractRawText: (messages) =>
+      messages.map((message) => message.text ?? "").find(Boolean) ?? "",
+    handleCommand: async (commandName) => {
+      events.push(`command:${commandName ?? "none"}`);
+      return false;
+    },
+    executeExtensionCommand: async (command) => {
+      events.push(`extension:${command.name}`);
+      return false;
+    },
+    expandPromptTemplateCommand: (commandName) => {
+      events.push(`template:${commandName}`);
+      return undefined;
+    },
+    replaceMessageText: (message, text) => ({ ...message, text }),
+    enqueueTurn: async (messages) => {
+      events.push(`enqueue:${JSON.stringify(messages)}`);
+    },
+    enqueueLaterTurn: async (messages, ctx) => {
+      events.push(`later:${JSON.stringify(messages)}:${ctx.id}`);
+    },
+    replyLaterUsage: async (message, ctx) => {
+      events.push(`usage:${message.id}:${ctx.id}`);
+    },
+  });
+  await runtime.dispatchMessages([{ id: 1, text: "/later check CI" }], {
+    id: "ctx",
+  });
+  await runtime.dispatchMessages(
+    [
+      { id: 2, photo: true },
+      { id: 3, photo: true, text: "/later compare these" },
+    ],
+    { id: "ctx" },
+  );
+  await runtime.dispatchMessages([{ id: 4, text: "/later" }], { id: "ctx" });
+  await runtime.dispatchMessages([{ id: 5, text: "now please" }], {
+    id: "ctx",
+  });
+  assert.deepEqual(events, [
+    'later:[{"id":1,"text":"check CI"}]:ctx',
+    'later:[{"id":2,"photo":true},{"id":3,"photo":true,"text":"compare these"}]:ctx',
+    "usage:4:ctx",
+    "command:none",
+    'enqueue:[{"id":5,"text":"now please"}]',
   ]);
 });
 

@@ -686,7 +686,17 @@ export function createTelegramBusFollowerTargetProvisioner(deps) {
         });
         const recordsBeforeProvision = deps.topicTargetStore.list();
         const followerProfileKey = registration.profileKey ?? `manual:${registration.instanceId}`;
-        const requestedTarget = registration.target ?? workspaceBinding?.target;
+        // An acknowledged creation for this same Workspace claim supersedes its former target.
+        const ownPendingTarget = workspaceIdentity
+            ? deps.topicTargetStore.listPendingProvisions().find((entry) => entry.instanceId === registration.instanceId &&
+                entry.workspaceBindingKey === workspaceIdentity.bindingKey && entry.target)?.target
+            : undefined;
+        const carriedFormerBinding = !!registration.target && !!workspaceBinding &&
+            registration.target.chatId === workspaceBinding.target.chatId &&
+            registration.target.threadId === workspaceBinding.target.threadId;
+        const requestedTarget = ownPendingTarget && (!registration.target || carriedFormerBinding)
+            ? ownPendingTarget
+            : registration.target ?? workspaceBinding?.target;
         const reconnectRecord = recordsBeforeProvision.find((record) => {
             const matchesRequestedTarget = !requestedTarget ||
                 (record.target.chatId === requestedTarget.chatId &&

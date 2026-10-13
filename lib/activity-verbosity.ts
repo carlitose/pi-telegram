@@ -459,6 +459,9 @@ export function createTelegramActivityVerbosityRuntime<TAuthority>(deps: {
           text: body,
           parse_mode: "HTML",
           link_preview_options: { is_disabled: true },
+          // In-turn progress never notifies; only final replies, errors and
+          // questions do. Edits carry no notification at all.
+          disable_notification: true,
         });
         if (!isCurrent(acceptedGeneration, admittedAuthority)) return;
         reasoningMessage = {
@@ -567,6 +570,8 @@ export function createTelegramActivityVerbosityRuntime<TAuthority>(deps: {
         ...(target.threadId === undefined
           ? {}
           : { message_thread_id: target.threadId }),
+        // Shared by the Rich send and its HTML fallback: progress stays silent.
+        disable_notification: true,
       };
       let sent: TelegramSentMessage;
       let format: ToolMessage["format"] = "rich";

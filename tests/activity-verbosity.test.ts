@@ -464,8 +464,47 @@ test("known-safe Rich rejection falls back to the HTML tool message", async () =
   await harness.runtime.waitForIdle();
   assert.equal(harness.richSends.length, 0);
   assert.equal(harness.sends.length, 1);
+  assert.equal(harness.sends[0]?.disable_notification, true);
   assert.match(harness.sends[0]?.text ?? "", /<b>Bash:<\/b>/);
   assert.match(harness.sends[0]?.text ?? "", /<blockquote expandable>/);
+});
+
+test("technical activity messages are sent silently and edits stay unchanged", async () => {
+  const harness = createHarness({ mode: "verbose" });
+  harness.runtime.accept(event(1, { type: "agent-start" }));
+  harness.runtime.accept(
+    event(2, {
+      type: "reasoning-end",
+      contentIndex: 0,
+      text: "Checking state",
+    }),
+  );
+  harness.runtime.accept(
+    event(3, {
+      type: "tool-end",
+      toolCallId: "tool-1",
+      toolName: "bash",
+      result: "one",
+      isError: false,
+    }),
+  );
+  // A failed tool is turn progress, not a turn error: it stays silent too.
+  harness.runtime.accept(
+    event(4, {
+      type: "tool-end",
+      toolCallId: "tool-2",
+      toolName: "read",
+      result: "missing",
+      isError: true,
+    }),
+  );
+  await harness.runtime.waitForIdle();
+  assert.equal(harness.sends.length, 1);
+  assert.equal(harness.sends[0]?.disable_notification, true);
+  assert.equal(harness.richSends.length, 1);
+  assert.equal(harness.richSends[0]?.disable_notification, true);
+  assert.equal(harness.edits.length, 1);
+  assert.equal("disable_notification" in harness.edits[0]!, false);
 });
 
 test("reasoning uses a persistent target-bound expandable HTML message", async () => {

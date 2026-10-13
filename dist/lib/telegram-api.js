@@ -1134,6 +1134,14 @@ export function createTelegramBridgeApiRuntime(deps) {
             chat_id: chatId,
             message_id: messageId,
         }).then(() => { }),
+        setMessageReaction: (chatId, messageId, emoji) => callRecorded("setMessageReaction", buildTelegramMessageReactionBody(chatId, messageId, emoji)).then(() => { }),
+    };
+}
+export function buildTelegramMessageReactionBody(chatId, messageId, emoji) {
+    return {
+        chat_id: chatId,
+        message_id: messageId,
+        reaction: [{ type: "emoji", emoji }],
     };
 }
 /**

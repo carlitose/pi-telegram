@@ -699,6 +699,8 @@ export interface TelegramTopicTargetStoreOptions {
   canPersist?: () => boolean;
   commitPersist?: (commit: () => void) => boolean;
   getExternalReservedSlots?: () => readonly string[];
+  /** The epoch of the leader lock this runtime owns, or undefined when it owns none. */
+  getCurrentLeaderEpoch?: () => number | string | undefined;
 }
 
 export interface TelegramTopicTargetProvisionerDeps {
@@ -1808,7 +1810,36 @@ export function isSameTelegramProcessInstance(
   return !!leftProcess && leftProcess === getInstanceProcessKey(right);
 }
 
-function isPendingProvisionLiveOrTargeted(
+/**
+ * A displaced leader's `createForumTopic` is one request that is not retried. Undici's
+ * default header and body timeouts are 300 s each, and there is at most one IPv4 fallback,
+ * so the request ends well within this bound. Only the https path with a forced network
+ * family has no proven limit.
+ */
+export const TELEGRAM_THREAD_ORPHANED_PROVISION_TTL_MS = 30 * 60 * 1000;
+
+/**
+ * An intent is orphaned when it has no target, is not ambiguous, carries a leader epoch that
+ * is no longer current, and is older than the orphan bound. It can never gain a topic: the
+ * displaced provisioner is fenced, and there is no recovery evidence to adopt. The live
+ * leader's own intents never qualify, so they still cannot expire into a duplicate create.
+ * The epoch is read last, because it comes from the lock file.
+ */
+export function isTelegramPendingProvisionOrphaned(
+  provision: TelegramThreadPendingProvision,
+  nowMs: number,
+  getCurrentLeaderEpoch: () => number | string | undefined,
+): boolean {
+  if (provision.target || provision.status === "ambiguous" ||
+      provision.leaderEpoch === undefined || !Number.isFinite(provision.startedAtMs) ||
+      nowMs - provision.startedAtMs < TELEGRAM_THREAD_ORPHANED_PROVISION_TTL_MS) {
+    return false;
+  }
+  const currentLeaderEpoch = getCurrentLeaderEpoch();
+  return currentLeaderEpoch !== undefined && provision.leaderEpoch !== currentLeaderEpoch;
+}
+
+function isPendingProvisionUnexpiredOrTargeted(
   provision: TelegramThreadPendingProvision,
   nowMs: number,
 ): boolean {
@@ -1835,6 +1866,26 @@ export function createTelegramTopicTargetStore(
       return undefined;
     }
   };
+  const captureCurrentLeaderEpoch = (): number | string | undefined => {
+    try {
+      return options.getCurrentLeaderEpoch?.();
+    } catch {
+      return undefined;
+    }
+  };
+  const isPendingProvisionOrphaned = (
+    provision: TelegramThreadPendingProvision,
+    nowMs: number,
+  ): boolean =>
+    isTelegramPendingProvisionOrphaned(provision, nowMs, captureCurrentLeaderEpoch);
+  // Every store liveness check shares this rule: an orphaned intent neither protects its
+  // slot nor blocks provisioning, and the next persist prunes it.
+  const isPendingProvisionLiveOrTargeted = (
+    provision: TelegramThreadPendingProvision,
+    nowMs: number,
+  ): boolean =>
+    isPendingProvisionUnexpiredOrTargeted(provision, nowMs) &&
+    !isPendingProvisionOrphaned(provision, nowMs);
   let botState: TelegramBotStateSnapshot = { threadMode: "unknown" };
   let records = new Map<string, TelegramTopicTargetRecord>();
   let identities = new Map<string, TelegramThreadIdentityRecord>();
@@ -3054,6 +3105,7 @@ export function createTelegramTopicTargetStore(
             protection: "unknown" as const,
           }));
         const nowMs = getNowMs();
+        const retainedSlotKey = retainedSlot?.toLowerCase();
         const reservedSlots = [
           ...Array.from(workspaceClaims.values()).map((claim) => claim.identity.slot),
           ...Array.from(records.values())
@@ -3064,11 +3116,14 @@ export function createTelegramTopicTargetStore(
             reservation.expiresAtMs === undefined || reservation.expiresAtMs > nowMs,
           ).map((reservation) => reservation.slot),
           ...pendingProvisions.filter((provision) =>
-            isPendingProvisionLiveOrTargeted(provision, nowMs),
+            isPendingProvisionLiveOrTargeted(provision, nowMs) &&
+            // Reserve the acknowledged slot from others, never from this exact claim's recovery.
+            !(retainedSlotKey && provision.target && provision.instanceId === instanceId &&
+              provision.workspaceBindingKey === identity.bindingKey &&
+              provision.slot?.toLowerCase() === retainedSlotKey),
           ).map((provision) => provision.slot),
           ...externalReservedSlots,
         ].filter((slot): slot is string => !!slot).map((slot) => slot.toLowerCase());
-        const retainedSlotKey = retainedSlot?.toLowerCase();
         if (retainedSlotKey && reservedSlots.includes(retainedSlotKey)) return undefined;
         const retainedSlotConflicts = !!retainedSlotKey &&
           otherBindings.some((other) => other.slot === retainedSlotKey);
@@ -3458,6 +3513,9 @@ export function createTelegramTopicTargetStore(
       );
       const existing = records.get(ownerKey) ?? records.get(profileKey);
       const nowMs = getNowMs();
+      const allocatablePendingProvisions = pendingProvisions.filter((provision) =>
+        !isPendingProvisionOrphaned(provision, nowMs),
+      );
       const isWorkspaceSlotOccupied = (slot: string): boolean =>
         Array.from(workspaceBindings.values()).some((binding) =>
           binding.bindingKey !== workspaceBindingKey && binding.slot === slot,
@@ -3496,7 +3554,7 @@ export function createTelegramTopicTargetStore(
         );
         if (foreignClaim || foreignBinding || isExternalSlotOccupied(slot) ||
             isTelegramTopicTargetSlotOccupied(
-              slot, records, reservations, pendingProvisions, nowMs,
+              slot, records, reservations, allocatablePendingProvisions, nowMs,
             )) return undefined;
         return slot;
       }
@@ -3509,7 +3567,7 @@ export function createTelegramTopicTargetStore(
           preferredSlot,
           records,
           reservations,
-          pendingProvisions,
+          allocatablePendingProvisions,
           nowMs,
         )
       ) {
@@ -3518,7 +3576,7 @@ export function createTelegramTopicTargetStore(
       const next = getNextMonotonicSlot(
         records,
         reservations,
-        pendingProvisions,
+        allocatablePendingProvisions,
         nowMs,
         botState.lastSlot,
       );
@@ -3531,7 +3589,7 @@ export function createTelegramTopicTargetStore(
           !isWorkspaceSlotOccupied(slot) &&
           !isWorkspaceClaimSlotOccupied(slot) &&
           !isTelegramTopicTargetSlotOccupied(
-            slot, records, reservations, pendingProvisions, nowMs,
+            slot, records, reservations, allocatablePendingProvisions, nowMs,
           ),
         );
     },

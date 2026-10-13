@@ -1,0 +1,17 @@
+Pi Telegram Reactive (@carlitose86/pi-telegram-reactive)
+
+This standalone fork derives from @llblab/pi-telegram, preserving the approved
+source baseline 1ed9a2e06e4b18eed0017e89c09512d91a67b367 and its attribution.
+https://github.com/llblab/pi-telegram
+
+The original project is badlogic/pi-telegram, ancestor commit
+cb34008460b6c1ca036d92322f69d87f626be0fc.
+https://github.com/badlogic/pi-telegram
+
+The original package.json and the official @llblab/pi-telegram 0.51.6 npm
+archive both declare the MIT license. Their inspected trees/archive contain
+no separate copyright or license notice file. This fork reproduces the MIT
+permission and warranty text in LICENSE without inventing author names,
+copyright years, or replacing any original source copyright notice.
+
+This provenance notice is attribution, not a new copyright ownership claim.

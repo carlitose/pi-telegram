@@ -460,6 +460,8 @@ export interface TelegramBridgeApiRuntime {
     answerGuestQueryForInlineMessage: (guestQueryId: string, text?: string, options?: TelegramAnswerGuestQueryOptions) => Promise<string | undefined>;
     editGuestInlineMessage: (inlineMessageId: string, content: TelegramEditGuestInlineMessageContent) => Promise<void>;
     deleteMessage: (chatId: number, messageId: number) => Promise<void>;
+    /** Replace the bot's own reaction on a message with one emoji. */
+    setMessageReaction: (chatId: number, messageId: number, emoji: string) => Promise<void>;
     prepareTempDir: () => Promise<number>;
 }
 export declare class TelegramApiCommitUnknownError extends Error {
@@ -538,6 +540,7 @@ export declare function createDefaultTelegramBridgeApiRuntime(deps: {
     deleteWorkspaceThread: TelegramWorkspaceThreadDeletionTransport;
 };
 export declare function createTelegramBridgeApiRuntime(deps: TelegramBridgeApiRuntimeDeps): TelegramBridgeApiRuntime;
+export declare function buildTelegramMessageReactionBody(chatId: number, messageId: number, emoji: string): Record<string, unknown>;
 /**
  * Creates a low-level Telegram Bot API client.
  * This is the main entry point for all direct Bot API communication

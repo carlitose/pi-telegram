@@ -3,7 +3,7 @@
  * Zones: telegram outbound, command templates, voice delivery
  * Owns configured outbound handler execution, text transforms, public assistant-output reply composition and mutation fencing, voice-file generation/delivery, runtime-event bridge, and compatibility re-exports; assistant markup parsing lives in outbound-markup and button callback actions live in outbound-buttons
  */
-import type { TelegramAssistantSegmentEvent } from "./activity.ts";
+import type { TelegramAssistantSegmentEvent, TelegramLocalPromptEcho } from "./activity.ts";
 import * as Replies from "./replies.ts";
 import type { TelegramPreparedPreviewDelivery } from "./preview.ts";
 import type { TelegramEditMessageTextBody, TelegramSendMessageBody, TelegramSendRichMessageBody, TelegramSentMessage } from "./telegram-api.ts";
@@ -183,3 +183,15 @@ export declare function createTelegramAssistantOutputSender<TTransportStamp, TRe
     getHandlers?: TelegramOutboundTextReplyRuntimeDeps<TReplyMarkup>["getHandlers"];
     recordRuntimeEvent?: TelegramOutboundTextReplyRuntimeDeps<TReplyMarkup>["recordRuntimeEvent"];
 }): (event: TelegramAssistantSegmentEvent, authority: TelegramAssistantOutputDeliveryAuthority<TTransportStamp>, isAuthorityActive: () => boolean) => Promise<void>;
+/** UTF-16 budget that keeps the echo one Telegram message (4096) with room for its markers. */
+export declare const TELEGRAM_LOCAL_PROMPT_ECHO_LIMIT = 3000;
+/** Render the operator's own terminal prompt literally, bounded to one message. */
+export declare function formatTelegramLocalPromptEcho(echo: TelegramLocalPromptEcho): string;
+/** Send the echo as silent plain text: the operator wrote it, so the phone need not ring. */
+export declare function createTelegramLocalPromptEchoSender<TTransportStamp>(deps: {
+    recordOwnership?: Replies.TelegramReplyOwnershipRecorder["record"];
+    sendMessage: (body: TelegramSendMessageBody) => Promise<TelegramSentMessage>;
+    sendRichMessage: (body: TelegramSendRichMessageBody) => Promise<TelegramSentMessage>;
+    editMessage: (body: TelegramEditMessageTextBody) => Promise<unknown>;
+    getAssistantRenderingMode: () => "rich" | "html";
+}): (echo: TelegramLocalPromptEcho, authority: TelegramAssistantOutputDeliveryAuthority<TTransportStamp>, isAuthorityActive: () => boolean) => Promise<void>;

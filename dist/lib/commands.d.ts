@@ -59,6 +59,7 @@ export declare const TELEGRAM_COMMAND_EMOJI: {
     readonly thread: "🧵";
     readonly next: "⏩";
     readonly continue: "▶️";
+    readonly later: "🔜";
     readonly abort: "⏹️";
     readonly stop: "🟥";
     readonly name: "🏷️";
@@ -153,7 +154,7 @@ export declare function createTelegramThreadDisplayNameRenameBinding(): {
     rename: TelegramThreadDisplayNameRenamePort;
 };
 export declare function registerTelegramBridgeCommands(pi: ExtensionAPI, deps: TelegramBridgeCommandRegistrationDeps): void;
-export declare const TELEGRAM_RESERVED_COMMAND_NAMES: readonly ["stop", "name", "new", "abort", "next", "continue", "status", "queue", "compact", "model", "thinking", "settings", "help", "start"];
+export declare const TELEGRAM_RESERVED_COMMAND_NAMES: readonly ["stop", "name", "new", "abort", "next", "continue", "later", "status", "queue", "compact", "model", "thinking", "settings", "help", "start"];
 export type TelegramReservedCommandName = (typeof TELEGRAM_RESERVED_COMMAND_NAMES)[number];
 export declare function isTelegramReservedCommandName(commandName: string | undefined): commandName is TelegramReservedCommandName;
 export type TelegramCommandAction = {
@@ -383,6 +384,9 @@ export interface TelegramCommandOrPromptRuntimeDeps<TMessage, TContext> {
     expandPromptTemplateCommand?: (commandName: string, args: string) => string | undefined;
     replaceMessageText: (message: TMessage, text: string) => TMessage;
     enqueueTurn: (messages: TMessage[], ctx: TContext) => Promise<void>;
+    /** Queues a prompt that never steers into a running Pi run. */
+    enqueueLaterTurn?: (messages: TMessage[], ctx: TContext) => Promise<void>;
+    replyLaterUsage?: (message: TMessage, ctx: TContext) => Promise<void>;
     assertExecutionCurrent?: (message: TMessage) => void;
 }
 export interface TelegramCommandRuntimeDeps<TMessage extends TelegramCommandRuntimeMessage, TContext> extends TelegramRuntimeEventRecorderPort {
@@ -448,6 +452,12 @@ export declare function createTelegramAppMenuHtmlBuilder<TContext>(deps: {
     buildStatusHtml: (ctx: TContext) => string;
     getPromptTemplateCommands?: () => readonly TelegramPromptTemplateMenuCommand[];
 }): (ctx: TContext) => string;
+export declare const TELEGRAM_LATER_USAGE_HTML: string;
+/**
+ * Returns the prompt text of a `/later` command (empty when missing), or
+ * undefined for any other text. Unlike command args, newlines are preserved.
+ */
+export declare function parseTelegramLaterCommandText(text: string): string | undefined;
 export declare function parseTelegramCommand(text: string): ParsedTelegramCommand | undefined;
 export declare const TELEGRAM_COMMAND_ACTIONS: {
     readonly stop: {
@@ -473,6 +483,10 @@ export declare const TELEGRAM_COMMAND_ACTIONS: {
     readonly continue: {
         readonly kind: "continue";
         readonly executionMode: "immediate";
+    };
+    readonly later: {
+        readonly kind: "ignore";
+        readonly executionMode: "ignored";
     };
     readonly status: {
         readonly kind: "status";

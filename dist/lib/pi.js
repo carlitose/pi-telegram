@@ -4,6 +4,40 @@
  * Owns direct pi SDK imports and exposes narrow bridge-facing helpers/types for the extension composition layer
  */
 import { SettingsManager, } from "@earendil-works/pi-coding-agent";
+export function registerPiRemoteDialogResponder(pi, handler) {
+    const register = pi.on.bind(pi);
+    register("ui_prompt_request", handler);
+}
+// pi-code owns this versioned in-process event. Keep the structural view at the
+// Pi boundary instead of importing a second extension's package-private source.
+export const PI_CODE_QUESTION_CHANNEL = "pi-code:question:v1";
+function isPiCodeQuestionOffer(value) {
+    if (!value || typeof value !== "object")
+        return false;
+    const offer = value;
+    const signal = offer.signal;
+    return offer.version === 1 && typeof offer.requestId === "string" &&
+        /^[A-Za-z0-9-]{1,64}$/.test(offer.requestId) &&
+        typeof offer.sessionId === "string" && offer.sessionId.length > 0 &&
+        typeof offer.question === "string" && (offer.header === undefined || typeof offer.header === "string") &&
+        Array.isArray(offer.options) && offer.options.length >= 2 && offer.options.length <= 4 &&
+        offer.options.every((option) => !!option && typeof option === "object" &&
+            typeof option.label === "string" &&
+            (option.description === undefined || typeof option.description === "string")) &&
+        typeof offer.multiSelect === "boolean" && offer.allowFreeText === !offer.multiSelect &&
+        typeof signal?.aborted === "boolean" && typeof signal.addEventListener === "function" &&
+        typeof signal.removeEventListener === "function" && typeof offer.claim === "function" &&
+        typeof offer.touch === "function";
+}
+export function registerPiCodeQuestionResponder(pi, getContext, handler) {
+    pi.events?.on(PI_CODE_QUESTION_CHANNEL, (data) => {
+        if (!isPiCodeQuestionOffer(data))
+            return;
+        const ctx = getContext();
+        if (ctx)
+            handler(data, ctx);
+    });
+}
 function isPiRunMode(value) {
     return (value === "tui" || value === "rpc" || value === "json" || value === "print");
 }

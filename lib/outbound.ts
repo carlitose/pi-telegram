@@ -8,7 +8,10 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { TelegramAssistantSegmentEvent } from "./activity.ts";
+import type {
+  TelegramAssistantSegmentEvent,
+  TelegramLocalPromptEcho,
+} from "./activity.ts";
 import { resolveTelegramTempDir } from "./paths.ts";
 import * as Replies from "./replies.ts";
 import type { TelegramPreparedPreviewDelivery } from "./preview.ts";
@@ -997,13 +1000,22 @@ export function createTelegramAssistantOutputSender<
     }
     const mutationFence =
       createTelegramAssistantOutputMutationFence(isAuthorityActive);
+    // Commentary between tool calls is in-turn progress and is sent silently;
+    // final and terminal-partial blocks close the turn and keep notifying.
+    const silent = event.placement === "intermediate";
+    const applyNotificationPolicy = <TBody extends Record<string, unknown>>(
+      body: TBody,
+    ): TBody => (silent ? { ...body, disable_notification: true } : body);
     const replyRuntime = Replies.createTelegramRenderedMessageDeliveryRuntime({
       recordOwnership: deps.recordOwnership,
       sendMessage(body) {
-        return mutationFence.run(deps.sendMessage, body);
+        return mutationFence.run(deps.sendMessage, applyNotificationPolicy(body));
       },
       sendRichMessage(body) {
-        return mutationFence.run(deps.sendRichMessage, body);
+        return mutationFence.run(
+          deps.sendRichMessage,
+          applyNotificationPolicy(body),
+        );
       },
       getAssistantRenderingMode: deps.getAssistantRenderingMode,
       editMessage(body) {
@@ -1030,6 +1042,71 @@ export function createTelegramAssistantOutputSender<
           ? { replyMarkup: buttonReply.replyMarkup }
           : {}),
       },
+    );
+  };
+}
+
+// --- Local Prompt Echo ---
+
+/** UTF-16 budget that keeps the echo one Telegram message (4096) with room for its markers. */
+export const TELEGRAM_LOCAL_PROMPT_ECHO_LIMIT = 3000;
+
+/** Render the operator's own terminal prompt literally, bounded to one message. */
+export function formatTelegramLocalPromptEcho(echo: TelegramLocalPromptEcho): string {
+  const text = echo.text.trim();
+  let kept = "";
+  let omitted = 0;
+  for (const codePoint of text) {
+    if (omitted > 0 || kept.length + codePoint.length > TELEGRAM_LOCAL_PROMPT_ECHO_LIMIT) {
+      omitted += 1;
+      continue;
+    }
+    kept += codePoint;
+  }
+  const body = omitted > 0 ? `${kept}… (+${omitted})` : kept;
+  const attachments = echo.imageCount > 0 ? `📎 ×${echo.imageCount}` : "";
+  return `💻 ${[body, attachments].filter(Boolean).join("\n")}`;
+}
+
+/** Send the echo as silent plain text: the operator wrote it, so the phone need not ring. */
+export function createTelegramLocalPromptEchoSender<TTransportStamp>(deps: {
+  recordOwnership?: Replies.TelegramReplyOwnershipRecorder["record"];
+  sendMessage: (body: TelegramSendMessageBody) => Promise<TelegramSentMessage>;
+  sendRichMessage: (
+    body: TelegramSendRichMessageBody,
+  ) => Promise<TelegramSentMessage>;
+  editMessage: (body: TelegramEditMessageTextBody) => Promise<unknown>;
+  getAssistantRenderingMode: () => "rich" | "html";
+}): (
+  echo: TelegramLocalPromptEcho,
+  authority: TelegramAssistantOutputDeliveryAuthority<TTransportStamp>,
+  isAuthorityActive: () => boolean,
+) => Promise<void> {
+  return async function sendLocalPromptEcho(echo, authority, isAuthorityActive) {
+    const target = authority.target;
+    if (!target) {
+      throw new Error("Local prompt echo has no authorized Telegram target.");
+    }
+    const mutationFence =
+      createTelegramAssistantOutputMutationFence(isAuthorityActive);
+    const replyRuntime = Replies.createTelegramRenderedMessageDeliveryRuntime({
+      recordOwnership: deps.recordOwnership,
+      sendMessage(body) {
+        return mutationFence.run(deps.sendMessage, body);
+      },
+      sendRichMessage(body) {
+        return mutationFence.run(deps.sendRichMessage, body);
+      },
+      getAssistantRenderingMode: deps.getAssistantRenderingMode,
+      editMessage(body) {
+        return mutationFence.run(deps.editMessage, body);
+      },
+    });
+    await replyRuntime.sendTextReply(
+      target.chatId,
+      undefined,
+      formatTelegramLocalPromptEcho(echo),
+      { target, disableNotification: true },
     );
   };
 }

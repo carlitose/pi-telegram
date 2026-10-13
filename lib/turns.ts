@@ -354,6 +354,8 @@ export function updateQueuedTelegramPromptTurnText<
   telegramPrefix: string;
   rawText: string;
   statusText?: string;
+  /** Removes the /later command an edited deferred prompt still carries. */
+  stripDeferredCommand?: (text: string) => string;
 }): { items: TelegramQueueItem<TContext>[]; changed: boolean } {
   if (options.sourceMessageId === undefined) {
     return { items: options.items, changed: false };
@@ -367,11 +369,17 @@ export function updateQueuedTelegramPromptTurnText<
       return item;
     }
     changed = true;
+    const strip = item.deferUntilIdle
+      ? options.stripDeferredCommand
+      : undefined;
     return updateTelegramPromptTurnText({
       turn: item,
       telegramPrefix: options.telegramPrefix,
-      rawText: options.rawText,
-      statusText: options.statusText,
+      rawText: strip ? strip(options.rawText) : options.rawText,
+      statusText:
+        strip && options.statusText !== undefined
+          ? strip(options.statusText)
+          : options.statusText,
     });
   });
   return { items, changed };
@@ -381,6 +389,7 @@ export interface TelegramQueuedPromptEditRuntimeDeps<
   TContext = unknown,
 > extends TelegramQueueStore<TContext> {
   updateStatus: (ctx: TContext) => void;
+  stripDeferredCommand?: (text: string) => string;
 }
 
 export function createTelegramQueuedPromptEditRuntime<
@@ -395,6 +404,7 @@ export function createTelegramQueuedPromptEditRuntime<
         telegramPrefix: TELEGRAM_PREFIX,
         rawText: extractTelegramMessagesPromptText([message]),
         statusText: extractTelegramMessagesText([message]),
+        stripDeferredCommand: deps.stripDeferredCommand,
       });
       deps.setQueuedItems(items);
       if (changed) deps.updateStatus(ctx);

@@ -52,12 +52,15 @@ export declare function updateQueuedTelegramPromptTurnText<TContext = unknown>(o
     telegramPrefix: string;
     rawText: string;
     statusText?: string;
+    /** Removes the /later command an edited deferred prompt still carries. */
+    stripDeferredCommand?: (text: string) => string;
 }): {
     items: TelegramQueueItem<TContext>[];
     changed: boolean;
 };
 export interface TelegramQueuedPromptEditRuntimeDeps<TContext = unknown> extends TelegramQueueStore<TContext> {
     updateStatus: (ctx: TContext) => void;
+    stripDeferredCommand?: (text: string) => string;
 }
 export declare function createTelegramQueuedPromptEditRuntime<TMessage extends TelegramMediaMessage, TContext = unknown>(deps: TelegramQueuedPromptEditRuntimeDeps<TContext>): {
     updateFromEditedMessage: (message: TMessage, ctx: TContext) => boolean;

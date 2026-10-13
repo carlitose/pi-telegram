@@ -19,6 +19,7 @@ jobs:
     uses: ./.github/workflows/validate.yml
 
   publish:
+    if: github.repository == 'carlitose/pi-telegram'
     needs: validate
     runs-on: ubuntu-latest
     permissions:
@@ -64,6 +65,9 @@ jobs:
 
           const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
           const packageLock = JSON.parse(readFileSync("package-lock.json", "utf8"));
+          if (packageJson.name !== "@carlitose86/pi-telegram-reactive" || packageLock.name !== packageJson.name || packageLock.packages?.[""]?.name !== packageJson.name) {
+            throw new Error("Unexpected standalone package identity.");
+          }
           const version = tagName.slice(1);
           if (packageJson.version !== version) {
             throw new Error(`Tag ${tagName} does not match package.json version ${packageJson.version}.`);
@@ -106,7 +110,7 @@ jobs:
       - name: Resolve npm publication state
         id: npm-state
         env:
-          PACKAGE_NAME: "@llblab/pi-telegram"
+          PACKAGE_NAME: "@carlitose86/pi-telegram-reactive"
           TAG_COMMIT: ${{ steps.preflight.outputs.tag_commit }}
           VERSION: ${{ steps.preflight.outputs.version }}
         run: |
@@ -133,10 +137,10 @@ jobs:
           fi
       - name: Publish npm package through Trusted Publisher
         if: steps.npm-state.outputs.publish == 'true'
-        run: npm publish --access public --provenance
+        run: npm publish --access public --provenance --tag next
       - name: Verify public npm package and packed manifest
         env:
-          PACKAGE_NAME: "@llblab/pi-telegram"
+          PACKAGE_NAME: "@carlitose86/pi-telegram-reactive"
           TAG_COMMIT: ${{ steps.preflight.outputs.tag_commit }}
           VERSION: ${{ steps.preflight.outputs.version }}
         run: |
