@@ -4,7 +4,11 @@
 
 ## Unreleased
 
-No additional changes beyond 0.1.0 below.
+No additional changes beyond 0.1.1 below.
+
+## 0.1.1: Runs started by extension messages
+
+- `Custom-message runs`: Pi 1.2.0 starts a run from an extension's custom message (a `/loop` round, a check's nudge) without a prompt. The bridge read `event.prompt.trimStart()` and threw on every such run, so those turns lost the bridge's system-prompt guidance. A missing prompt is now a local, non-Telegram turn.
 
 ## 0.1.0: First stable release
 

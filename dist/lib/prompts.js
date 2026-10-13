@@ -113,7 +113,7 @@ export function buildTelegramBridgeSystemPrompt(options) {
     const telegramHead = telegramPrefix.endsWith("]")
         ? telegramPrefix.slice(0, -1)
         : telegramPrefix;
-    const trimmedPrompt = options.prompt.trimStart();
+    const trimmedPrompt = (options.prompt ?? "").trimStart();
     const telegramTurn = trimmedPrompt.startsWith(`${telegramHead}]`) ||
         trimmedPrompt.startsWith(`${telegramHead}|`);
     const telegramSuffix = telegramTurn
