@@ -49,7 +49,7 @@ Inbound handlers match `kind: "voice"` or `mime: "audio/*"` to run a transcripti
 
 The transcription output becomes the raw text of the prompt.
 
-Voice provider extensions can also register STT backends with `registerTelegramVoiceTranscriptionProvider()` from `@llblab/pi-telegram/voice`. Inbound command-template handlers and programmatic inbound handlers remain the stronger generic paths and run first; if no matching handler produces output for a voice/audio file, registered transcription providers are tried as fallback in registration order. The first provider that returns non-empty text wins; providers that return `undefined` pass to the next provider, and provider failures are recorded before trying the next provider. This lets a full voice extension provide both TTS and STT without requiring `telegram.json` handler templates, while still preserving operator-configured inbound handlers as the stronger choice.
+Voice provider extensions can also register STT backends with `registerTelegramVoiceTranscriptionProvider()` from `@carlitose86/pi-telegram-reactive/voice`. Inbound command-template handlers and programmatic inbound handlers remain the stronger generic paths and run first; if no matching handler produces output for a voice/audio file, registered transcription providers are tried as fallback in registration order. The first provider that returns non-empty text wins; providers that return `undefined` pass to the next provider, and provider failures are recorded before trying the next provider. This lets a full voice extension provide both TTS and STT without requiring `telegram.json` handler templates, while still preserving operator-configured inbound handlers as the stronger choice.
 
 ## Voice Reply Policy
 
@@ -96,7 +96,7 @@ The bridge shows a `record_voice` action while delivering and sends the final au
 
 Providers can implement `getVoicePromptContribution(view)` to inject voice-specific instructions into voice-tagged prompts (for example: "Reply only with the spoken text"). The bridge appends the first non-empty provider contribution when `mirror` or `always` mode tags the turn.
 
-Import provider APIs from `@llblab/pi-telegram/voice`; see the TSDoc on `registerTelegramVoiceSynthesisProvider` and `TelegramVoiceSynthesisProviderResult` there for the exact interface.
+Import provider APIs from `@carlitose86/pi-telegram-reactive/voice`; see the TSDoc on `registerTelegramVoiceSynthesisProvider` and `TelegramVoiceSynthesisProviderResult` there for the exact interface.
 
 The provider receives the raw agent text plus optional `{ lang?, rate? }`.
 
@@ -140,7 +140,7 @@ Priority for outbound voice delivery is: configured `outboundHandlers` with `typ
 Voice provider extensions can record runtime events that appear in `/telegram-status` alongside pi-telegram's own events:
 
 ```typescript
-import { recordTelegramRuntimeEvent } from "@llblab/pi-telegram/outbound";
+import { recordTelegramRuntimeEvent } from "@carlitose86/pi-telegram-reactive/outbound";
 
 recordTelegramRuntimeEvent("voice-provider", new Error("TTS failed"), {
   phase: "tts",
@@ -154,7 +154,7 @@ recordTelegramRuntimeEvent("voice-provider", new Error("TTS failed"), {
 
 Voice provider extensions can register a Voice Extension Section (settings UI) via `registerTelegramSection`. The section can expose provider-specific controls such as TTS voice, language, speech style, or STT/TTS enablement. Reply mode is a core pi-telegram setting and belongs in the built-in Settings menu.
 
-**Note on resume:** Because the previous automatic persistent re-registration system has been removed, extensions are responsible for re-registering their Voice Extension Section on `session_start` if they want the menu to survive a `pi resume`. See `registerTelegramSection` from `@llblab/pi-telegram/sections`.
+**Note on resume:** Because the previous automatic persistent re-registration system has been removed, extensions are responsible for re-registering their Voice Extension Section on `session_start` if they want the menu to survive a `pi resume`. See `registerTelegramSection` from `@carlitose86/pi-telegram-reactive/sections`.
 
 ## Prompt Guidance
 

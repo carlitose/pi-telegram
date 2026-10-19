@@ -1,4 +1,4 @@
-# pi-telegram
+# Pi Telegram Reactive
 
 ![pi-telegram screenshot](screenshot.png)
 
@@ -8,27 +8,29 @@
 
 It is a **runtime adapter**, not a remote terminal. Start or supervise work in the Pi TUI, then continue from Telegram while away from the keyboard. In Threaded Mode, a durable Workspace binding uses Pi's stable public session identity to restore the same Telegram Thread when that session resumes; live instance ownership and the exact Telegram target still authorize routing. The bridge preserves Pi session semantics instead of pretending Telegram is a PTY, shell, process launcher, or session browser. That boundary is the product: Telegram gets safe runtime handles, not raw terminal power.
 
-Every completed intermediate commentary block from a Telegram-originated turn is delivered once as its own message before the existing final reply. While Telegram is connected, local, autonomous, and unclassified extension follow-up work also projects visible checkpoints and the final answer to the authorized Telegram target once and in order, preserving assistant-authored `telegram_button` comments as interactive prompt buttons. This connected companion projection is always active rather than configurable. Neither path mirrors local prompts, thinking, tool traffic, token deltas, or stale-generation work. The separate `Activity` setting defaults to `verbose` so new installations discover collapsed provider-exposed thinking and tool evidence immediately; operators can narrow it to one class or choose `quiet`. See [Outbound](docs/outbound.md#public-assistant-output) and the [configuration reference](docs/public-api.md#configuration-api).
+Every completed intermediate commentary block from a Telegram-originated turn is delivered once as its own message before the existing final reply. While Telegram is connected, local, autonomous, and unclassified extension follow-up work also projects visible checkpoints and the final answer to the authorized Telegram target once and in order, preserving assistant-authored `telegram_button` comments as interactive prompt buttons. This connected companion projection is always active rather than configurable. A prompt typed at the terminal is echoed first, silently, as literal `💻 <text>` so the chat shows what the reply answers; RPC and extension-injected prompts are not echoed. Neither path mirrors thinking, tool traffic, token deltas, or stale-generation work. The separate `Activity` setting defaults to `verbose` so new installations discover collapsed provider-exposed thinking and tool evidence immediately; operators can narrow it to one class or choose `quiet`. Messages sent while a run is still working—commentary and activity—arrive silently; the final reply, turn errors and questions notify. See [Outbound](docs/outbound.md#public-assistant-output) and the [configuration reference](docs/public-api.md#configuration-api).
 
-This repository is an actively maintained standalone fork of [`badlogic/pi-telegram`](https://github.com/badlogic/pi-telegram). It started from upstream commit [`cb34008`](https://github.com/badlogic/pi-telegram/commit/cb34008460b6c1ca036d92322f69d87f626be0fc) and has since diverged substantially.
+Pi Telegram Reactive is the distinct `@carlitose86/pi-telegram-reactive` preview, based on [`@llblab/pi-telegram`](https://github.com/llblab/pi-telegram) at commit `1ed9a2e06e4b18eed0017e89c09512d91a67b367`, with the approved source-level recovery/callback fixes and read-only terminal controls projection. The original llblab fork started from [`badlogic/pi-telegram`](https://github.com/badlogic/pi-telegram) commit [`cb34008`](https://github.com/badlogic/pi-telegram/commit/cb34008460b6c1ca036d92322f69d87f626be0fc); its attribution and MIT declaration are retained. This candidate is not evidence of npm publication or gallery indexing.
 
 ## Install
 
 From npm:
 
 ```bash
-pi install npm:@llblab/pi-telegram
+pi install npm:@carlitose86/pi-telegram-reactive
 ```
 
 From git:
 
 ```bash
-pi install git:github.com/llblab/pi-telegram
+pi install git:github.com/carlitose/pi-telegram@release/reactive-next-0
 ```
+
+These install commands apply once the corresponding preview or Git branch is published. For the movable preview channel use `pi install npm:@carlitose86/pi-telegram-reactive@next` and `pi update npm:@carlitose86/pi-telegram-reactive@next`; an exact-version registration remains pinned rather than following newer previews. Do not load both the upstream bridge and this fork, or retain a separate consumer transcript adapter when this package owns the projection.
 
 Installed npm/git packages expose bundled Skills through their `pi.skills` manifest, so Pi package filters and package provenance remain authoritative. A checkout auto-discovered directly under Pi's user or project `extensions` directory contributes its adjacent source Skills even when Pi selects the checkout's compiled entrypoint; the two discovery paths are mutually exclusive.
 
-The extension requires Pi `0.84.4` or newer, matching the package's peer dependencies. Its Activity API uses the public `agent_settled` lifecycle event to keep retries/continuations under one activity identity and release that identity only after the run fully settles.
+The preview verification target is Pi `1.0.0` with Node.js `24`. Host SDKs remain unbundled peers pinned to the `1.0.0` preview target; untested host versions are not supported by this candidate. Its Activity API uses the public `agent_settled` lifecycle event to keep retries/continuations under one activity identity and release that identity only after the run fully settles.
 
 Pi is the primary and only officially supported host. Narrow host-neutral adapters preserve ordered prompt blocks and normalize synchronous or asynchronous legacy/generic settings services for Pi-compatible hosts, but this is best-effort compatibility rather than an OMP support guarantee. Alternate-host shims must still reproduce required Pi lifecycle semantics—especially `agent_settled`—and their maintainers own ongoing validation.
 
@@ -97,7 +99,7 @@ Enable the optional capabilities the bridge needs in the [@BotFather](https://t.
 ## What It Feels Like
 
 - Start a task in the terminal, walk away, and keep supervising it from your phone.
-- Send another prompt while Pi is busy; it becomes a queued Telegram turn instead of interrupting the active run.
+- Send another prompt while Pi is busy; it waits in the queue and enters the running work at the next turn boundary, like steering from the terminal. The bot marks it with 👀 once the model reads it. Start it with `/later` (also as a photo or document caption) to keep it waiting until Pi is idle instead.
 - Open `/start` to inspect status, model, thinking, settings, prompt templates, and queue controls.
 - Send voice, images, files, replies, edits, or media groups; the bridge turns them into Pi context.
 - Ask for an artifact; `telegram_attach` returns it before the turn's separate final text, or through explicit direct Telegram delivery.
@@ -170,6 +172,7 @@ Use these in the bot DM.
 | `/compact` | Confirm and run session compaction when safe |
 | `/next` | Dispatch the next queued turn, aborting first if needed |
 | `/continue` | Enqueue a priority continuation prompt |
+| `/later <message>` | Queue a prompt, photo or document caption for when Pi is idle; it never steers into running work |
 | `/abort` | Abort the active run while preserving the queue |
 | `/stop` | Abort the active run and clear waiting Telegram turns |
 
@@ -200,6 +203,8 @@ Named profile identifiers contain only lowercase ASCII letters and digits (maxim
 
 Messages sent while Pi is busy become queued turns. Queue controls let you inspect, prioritize, keep or skip, and dispatch work without touching the terminal.
 
+While a run is working, the next ready queued prompt steers into it at each turn boundary (after a tool batch or model reply), exactly like a terminal steer: one prompt per boundary, Priority before Normal, and the reply continues in the running work. The bot sets a 👀 reaction on your message when the model reads it. If the run ends before reading it, the bot replies silently that it was not delivered and does not resend it. Skipped prompts, `/later` prompts, guest queries, `/continue` and model-switch continuations, and prompts with large image documents still wait until Pi is idle; a normal prompt behind a `/later` prompt can still steer.
+
 Queue policy:
 
 - One prompt is one queue object with exactly one current lane and one current position; it never reserves a shadow place in the other lane. The terminal's yellow `+N` suffix counts only executable prompts still waiting, never the current run; a dispatched Telegram prompt stops contributing before that run settles.
@@ -228,7 +233,7 @@ Voice notes, audio, images, PDFs, and other media can pass through configured in
 
 ### Buttons And Callbacks
 
-Assistant replies can place controls between paragraphs using standalone triple-backtick `telegram_button` blocks, or keep them in the footer using top-level hidden `telegram_button` comments. Both wrappers accept singleton cells and mixed JSON/CML matrices. Native in-body rows allow up to eight buttons; HTML compatibility moves these rows to the footer. In-body clicks acknowledge without recoloring the Rich body, while footer selection styles remain unchanged. Hidden comments accept a JSON object, adaptive JSON/CML matrix, or positional Compact Matrix Literal (CML). One adaptive matrix may mix named JSON objects with positional CML cells; separators are optional and one trailing comma is tolerated, including inside JSON objects. Top-level cells become full-width rows while nested rows group one or more buttons horizontally without an artificial parser-level width cap; inside a fenced block, adjacent top-level JSON/CML objects may omit the outer array and commas. Generated surfaces default to five columns and use six to eight only for short position-bearing labels. CML uses `{value}`, `{label|prompt}`, `{|prompt}`, or the corresponding three-atom form with `selected_style` set to `primary`, `success`, or `danger`; omitting the first atom leaves the existing prompt-as-label fallback in charge, while the optional style still requires a non-empty prompt. A fourth atom adds disabled state: `{|Next||1}` or `{|Next||true}` disables, `0` or `false` enables (exact lowercase), and omission stays enabled; the third atom may be empty in this form. JSON uses boolean `disabled`. Disabled controls require no prompt or selected style: `{Next|||1}` shows only a label, while `{|||1}` is a blank disabled cell. Disabled controls remain visible without registering callbacks or invoking prompts/app methods. It trims atom boundaries, preserves non-structural text literally, and decodes only `\|`, `\}`, and `\\`. Prefer one matrix comment for multiple buttons. Buttons use `label` plus `prompt`, or the compact `value` key when both are identical. The bridge strips every assistant-authored HTML comment from Telegram previews and final replies regardless of Markdown position or owning extension, while only recognized top-level comments activate buttons or voice; comment-only output sends no text message and the Pi terminal transcript remains unchanged. It renders valid inline buttons and routes callbacks back into Pi as queued prompts or extension-owned callback actions. Button-only replies receive the standard `☑️ **Choose an option:**` heading as automatic visible fallback text. Once a generated prompt button is accepted, only that exact button switches to its optional `selected_style` (`primary` blue by default, `success` green, or `danger` red) without altering its agent-authored label or emoji; every style still queues the selected prompt.
+Assistant replies can place controls between paragraphs using standalone triple-backtick `telegram_button` blocks, or keep them in the footer using top-level hidden `telegram_button` comments. Both wrappers accept singleton cells and mixed JSON/CML matrices. Native in-body rows allow up to eight buttons; HTML compatibility moves these rows to the footer. In-body clicks acknowledge without recoloring the Rich body, while footer selection styles remain unchanged. Hidden comments accept a JSON object, adaptive JSON/CML matrix, or positional Compact Matrix Literal (CML). One adaptive matrix may mix named JSON objects with positional CML cells; separators are optional and one trailing comma is tolerated, including inside JSON objects. Top-level cells become full-width rows while nested rows group one or more buttons horizontally without an artificial parser-level width cap; inside a fenced block, adjacent top-level JSON/CML objects may omit the outer array and commas. Generated surfaces default to five columns and use six to eight only for short position-bearing labels. CML uses `{value}`, `{label|prompt}`, `{|prompt}`, or the corresponding three-atom form with `selected_style` set to `primary`, `success`, or `danger`; omitting the first atom leaves the existing prompt-as-label fallback in charge, while the optional style still requires a non-empty prompt. A fourth atom adds disabled state: `{|Next||1}` or `{|Next||true}` disables, `0` or `false` enables (exact lowercase), and omission stays enabled; the third atom may be empty in this form. JSON uses boolean `disabled`. Disabled controls require no prompt or selected style: `{Next|||1}` shows only a label, while `{|||1}` is a blank disabled cell. Disabled controls remain visible without registering callbacks or invoking prompts/app methods. It trims atom boundaries, preserves non-structural text literally, and decodes only `\|`, `\}`, and `\\`. Prefer one matrix comment for multiple buttons. Buttons use `label` plus `prompt`, or the compact `value` key when both are identical. The bridge strips every assistant-authored HTML comment from Telegram previews and final replies regardless of Markdown position or owning extension, while only recognized top-level comments activate buttons or voice; comment-only output sends no Telegram text message. Stored Pi messages remain unchanged; the terminal display projects valid assistant controls into numbered readable choices through Pi's public Markdown transformer, even without a bot/token. Users answer normally with a number or free text; no token widget, waiting question, input owner or automatic modal is installed. Bound methods and disabled controls are displayed as unavailable and never executed. It renders valid inline buttons and routes callbacks back into Pi as queued prompts or extension-owned callback actions. Button-only replies receive the standard `☑️ **Choose an option:**` heading as automatic visible fallback text. Once a generated prompt button is accepted, only that exact button switches to its optional `selected_style` (`primary` blue by default, `success` green, or `danger` red) without altering its agent-authored label or emoji; every style still queues the selected prompt.
 
 ### Threaded Mode And Multi-Instance Bus
 
@@ -266,6 +271,8 @@ Most controls live in Pi commands or the Telegram menu. Environment variables re
 Defaults are chosen for ordinary private-bot use: saved config in `~/.pi/agent`, inbound temp files in `~/.pi/agent/tmp/telegram`, `assistant: { rendering: "rich", draftPreviews: true, activity: "verbose", timeInjection: "interval" }` for assistant output and activity, and native Telegram active status for long-running turns.
 
 ## Extension Platform
+
+Companion extensions can also project ordinary assistant buttons onto another display through the pure public [`/controls` API](./docs/public-api.md#pure-assistant-controls), without connecting a bot or changing Telegram delivery. Consumers own safe display, session fencing and explicit selection; Generative App methods remain unavailable in this projection.
 
 Companion extensions can integrate with Telegram without owning polling or transport:
 
@@ -335,7 +342,7 @@ Full validation:
 npm run validate
 ```
 
-`npm run audit` fails closed over dependencies owned and shipped by `pi-telegram`, omitting Pi host packages declared as peers because the host selects and supplies their dependency graph. Use `npm run audit:host` separately to inspect the complete installed development graph, including upstream Pi advisories; host findings remain visible without being misattributed to this extension's release artifact.
+`npm run audit` retains npm's complete observed report and maps each vulnerable node to the locked dependency closure. Owned runtime and non-peer development dependencies fail the check, as do unknown nodes; a dependency reachable from both an owned tool and a host peer remains owned. Pi packages explicitly supplied as peers are reported separately even when installed for development, because the host owns that graph. `npm run audit:host` remains the unfiltered audit. Pi 1.0.0's shrinkwrap currently pins vulnerable `brace-expansion` 5.0.9: the host warning is not hidden, fixed by this preview, or proof of production safety.
 
 Project context:
 

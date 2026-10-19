@@ -319,6 +319,9 @@ export function createTelegramActivityVerbosityRuntime(deps) {
                     text: body,
                     parse_mode: "HTML",
                     link_preview_options: { is_disabled: true },
+                    // In-turn progress never notifies; only final replies, errors and
+                    // questions do. Edits carry no notification at all.
+                    disable_notification: true,
                 });
                 if (!isCurrent(acceptedGeneration, admittedAuthority))
                     return;
@@ -420,6 +423,8 @@ export function createTelegramActivityVerbosityRuntime(deps) {
                 ...(target.threadId === undefined
                     ? {}
                     : { message_thread_id: target.threadId }),
+                // Shared by the Rich send and its HTML fallback: progress stays silent.
+                disable_notification: true,
             };
             let sent;
             let format = "rich";

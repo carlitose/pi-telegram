@@ -589,6 +589,15 @@ export function isTelegramFollowerApiCallAllowed(input: {
       return isBotCommandRegistration(input.args[1]);
     if (apiMethod === "sendChatAction")
       return isTargetChatScoped(input.args[1]);
+    // Reactions carry no message_thread_id; the leader can only scope them to
+    // the follower chat. The reacted message is user-authored, never bot-owned.
+    if (apiMethod === "setMessageReaction") {
+      if (!isTargetChatScoped(input.args[1])) return false;
+      const messageId = (input.args[1] as Record<string, unknown>).message_id;
+      const parsedMessageId =
+        typeof messageId === "number" ? messageId : Number(messageId);
+      return Number.isSafeInteger(parsedMessageId) && parsedMessageId > 0;
+    }
     if (
       apiMethod === "sendMessage" &&
       isTelegramBusAggregateDelivery(input.args[1])
@@ -2751,7 +2760,9 @@ function parseQueueHandoffPayload(
     (value.voiceReplyPreferred !== undefined &&
       typeof value.voiceReplyPreferred !== "boolean") ||
     (value.voiceReplyRequired !== undefined &&
-      typeof value.voiceReplyRequired !== "boolean")
+      typeof value.voiceReplyRequired !== "boolean") ||
+    (value.deferUntilIdle !== undefined &&
+      typeof value.deferUntilIdle !== "boolean")
   ) {
     return undefined;
   }
@@ -2780,6 +2791,7 @@ function parseQueueHandoffPayload(
     ...(typeof value.voiceReplyRequired === "boolean"
       ? { voiceReplyRequired: value.voiceReplyRequired }
       : {}),
+    ...(value.deferUntilIdle === true ? { deferUntilIdle: true } : {}),
   };
 }
 

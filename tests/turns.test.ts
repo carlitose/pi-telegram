@@ -1046,6 +1046,65 @@ test("Turn edit runtime binds queued prompt updates to status", () => {
   assert.deepEqual(events, ["items:1", "status:ctx"]);
 });
 
+test("Turn edit runtime strips /later from edited deferred prompts only", () => {
+  const basePrompt = {
+    kind: "prompt" as const,
+    chatId: 99,
+    queueLane: "default" as const,
+    queuedAttachments: [],
+    content: [{ type: "text" as const, text: "[telegram] old" }],
+    historyText: "old",
+    statusSummary: "old",
+  };
+  let items: PendingTelegramTurn[] = [
+    {
+      ...basePrompt,
+      replyToMessageId: 10,
+      sourceMessageIds: [10],
+      queueOrder: 1,
+      laneOrder: 1,
+      deferUntilIdle: true,
+    },
+    {
+      ...basePrompt,
+      replyToMessageId: 11,
+      sourceMessageIds: [11],
+      queueOrder: 2,
+      laneOrder: 2,
+    },
+  ];
+  const runtime = createTelegramQueuedPromptEditRuntime<
+    { message_id: number; text?: string },
+    string
+  >({
+    getQueuedItems: () => items,
+    setQueuedItems: (nextItems) => {
+      items = nextItems as PendingTelegramTurn[];
+    },
+    updateStatus: () => {},
+    stripDeferredCommand: (text) =>
+      text.replace(/^\/later\s*/u, ""),
+  });
+  runtime.updateFromEditedMessage(
+    { message_id: 10, text: "/later edited later" },
+    "ctx",
+  );
+  runtime.updateFromEditedMessage(
+    { message_id: 11, text: "/later stays literal" },
+    "ctx",
+  );
+  assert.equal(
+    (items[0]?.content[0] as { text: string }).text,
+    "[telegram] edited later",
+  );
+  assert.equal(items[0]?.statusSummary, "edited later");
+  assert.equal(items[0]?.deferUntilIdle, true);
+  assert.equal(
+    (items[1]?.content[0] as { text: string }).text,
+    "[telegram] /later stays literal",
+  );
+});
+
 test("Turn edit runtime keeps reply context prompt-only when queued messages change", () => {
   let items = [
     {

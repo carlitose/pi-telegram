@@ -326,6 +326,7 @@ export function createTelegramQueueHandoffPayload(item) {
         ...(item.voiceReplyRequired !== undefined
             ? { voiceReplyRequired: item.voiceReplyRequired }
             : {}),
+        ...(item.deferUntilIdle ? { deferUntilIdle: true } : {}),
     });
 }
 export function restoreTelegramQueueHandoffPayload(payload, createControlExecution) {
@@ -874,10 +875,25 @@ export function buildTelegramAgentEndPlan(options) {
         shouldSendAttachmentNotice: false,
     };
 }
+/** Records a deliberately undelivered final reply without its content. */
+function recordTelegramDroppedFinalReply(recordRuntimeEvent, phase, turn, content) {
+    recordRuntimeEvent?.("delivery", new Error("Telegram final reply was not delivered."), {
+        phase,
+        hasTurn: !!turn,
+        hasThread: turn?.target?.threadId !== undefined,
+        textLength: content.text?.length ?? 0,
+        attachmentCount: content.attachmentCount ?? 0,
+    });
+}
 export function createTelegramAgentEndHook(deps) {
     return async (event, ctx, assistantOverride) => {
-        if (deps.isSessionActive?.(ctx) === false)
+        if (deps.isSessionActive?.(ctx) === false) {
+            const activeTurn = deps.getActiveTurn();
+            if (activeTurn) {
+                recordTelegramDroppedFinalReply(deps.recordRuntimeEvent, "final-reply-session-inactive", activeTurn, { attachmentCount: activeTurn.queuedAttachments.length });
+            }
             return;
+        }
         const turn = deps.getActiveTurn();
         const extractedAssistant = assistantOverride ?? (turn ? deps.extractAssistant(event.messages) : {});
         const assistant = deps.isAssistantAlreadyPublished?.(extractedAssistant)
@@ -888,8 +904,15 @@ export function createTelegramAgentEndHook(deps) {
         const scheduleDelivery = reservation?.schedule ?? deps.scheduleActiveTurnDelivery;
         try {
             await deps.loadConfig?.();
-            if (deps.isSessionActive?.(ctx) === false || deps.getActiveTurn() !== turn)
+            const sessionInactive = deps.isSessionActive?.(ctx) === false;
+            if (sessionInactive || deps.getActiveTurn() !== turn) {
+                if (hasPublication) {
+                    recordTelegramDroppedFinalReply(deps.recordRuntimeEvent, sessionInactive
+                        ? "final-reply-session-inactive"
+                        : "final-reply-turn-replaced", turn, { text: assistant.text, attachmentCount: turn?.queuedAttachments.length });
+                }
                 return;
+            }
             await handleTelegramAgentEndRuntime({
                 turn,
                 assistant,
@@ -963,8 +986,26 @@ export async function handleTelegramAgentEndRuntime(deps) {
     const finalText = outboundReply ? outboundReply.markdown : rawFinalText;
     const hasOutboundArtifacts = !!outboundReply?.voiceText || !!outboundReply?.voiceReplies?.length;
     const replyMarkup = outboundReply?.replyMarkup;
-    const isDeliveryActive = () => deps.isSessionActive?.() !== false &&
-        (!turn || deps.isTurnTransportActive?.(turn) !== false);
+    const hasPublishableContent = !!finalText ||
+        hasOutboundArtifacts ||
+        (turn?.queuedAttachments.length ?? 0) > 0 ||
+        assistant.stopReason === "error";
+    let dropRecorded = false;
+    // The first failed fence that would lose content leaves one diagnostic event;
+    // without it a dropped final reply is indistinguishable from a sent one.
+    const isDeliveryActive = () => {
+        const sessionActive = deps.isSessionActive?.() !== false;
+        const transportActive = !turn || deps.isTurnTransportActive?.(turn) !== false;
+        if (sessionActive && transportActive)
+            return true;
+        if (!dropRecorded && hasPublishableContent) {
+            dropRecorded = true;
+            recordTelegramDroppedFinalReply(deps.recordRuntimeEvent, sessionActive
+                ? "final-reply-transport-inactive"
+                : "final-reply-session-inactive", turn, { text: finalText, attachmentCount: turn?.queuedAttachments.length });
+        }
+        return false;
+    };
     const preview = turn && !turn.guestQueryId ? deps.preparePreviewDelivery?.(isDeliveryActive) : undefined;
     const setPreviewPendingText = preview?.setPreviewPendingText ?? deps.setPreviewPendingText;
     const finalizeMarkdownPreview = preview?.finalizeMarkdownPreview ?? deps.finalizeMarkdownPreview;
@@ -1586,7 +1627,10 @@ export async function enqueueTelegramPromptTurnRuntime(messages, deps) {
         historyTurns.push(item);
         return false;
     });
-    const turn = buildTurn(historyTurns);
+    const builtTurn = buildTurn(historyTurns);
+    const turn = deps.deferUntilIdle
+        ? { ...builtTurn, deferUntilIdle: true }
+        : builtTurn;
     deps.setQueuedItems(appendTelegramQueueItem(remainingItems, turn));
     deps.onQueued?.(turn);
     deps.updateStatus();
@@ -1595,13 +1639,14 @@ export async function enqueueTelegramPromptTurnRuntime(messages, deps) {
 }
 export function createTelegramPromptEnqueueController(deps) {
     return {
-        enqueue: (messages, ctx, onQueued) => enqueueTelegramPromptTurnRuntime(messages, {
+        enqueue: (messages, ctx, onQueued, options) => enqueueTelegramPromptTurnRuntime(messages, {
             ...deps,
             prepareTurn: (nextMessages) => deps.prepareTurn(nextMessages, ctx),
             updateStatus: () => deps.updateStatus(ctx),
             dispatchNextQueuedTelegramTurn: () => deps.dispatchNextQueuedTelegramTurn(ctx),
             assertExecutionCurrent: () => deps.assertExecutionCurrent?.(messages),
             onQueued,
+            deferUntilIdle: options?.deferUntilIdle,
         }),
     };
 }
@@ -2037,4 +2082,165 @@ export function createTelegramQueueDispatchController(deps) {
         },
     };
     return controller;
+}
+// --- Mid-Run Steer Runtime ---
+// A busy Pi run absorbs queued Telegram prompts the way the terminal steers:
+// the prompt waits in the bridge queue (still editable and reorderable) until a
+// turn boundary, then enters the same run as a Pi steer message.
+export const TELEGRAM_MID_RUN_STEER_REACTION_EMOJI = "\u{1F440}";
+export const TELEGRAM_MID_RUN_STEER_QUEUE_WAIT_MS = 500;
+// Pi normalizes images only for idle prompts, never for steers. Telegram photos
+// stay well below this bound; larger image documents wait for idle dispatch.
+export const TELEGRAM_MID_RUN_STEER_MAX_IMAGE_BASE64_CHARS = 2 * 1024 * 1024;
+export const TELEGRAM_MID_RUN_STEER_UNDELIVERED_TEXT = "\u26A0\uFE0F Not delivered: the agent finished before reading this message. Send it again if it still matters.";
+export function canTelegramMidRunSteerContent(content) {
+    return content.every((part) => part.type !== "image" ||
+        part.data.length <= TELEGRAM_MID_RUN_STEER_MAX_IMAGE_BASE64_CHARS);
+}
+/**
+ * Pick the queued prompt a busy run may absorb at its next turn boundary.
+ * Control-lane work, /later, Skip-suppressed prompts, and guest queries keep
+ * waiting for idle dispatch; an unready or oversized candidate blocks steering
+ * so lanes stay FIFO.
+ */
+export function selectTelegramMidRunSteerCandidate(items, deps) {
+    for (const item of items) {
+        if (item.kind !== "prompt" || item.queueLane === "control")
+            continue;
+        if (item.deferUntilIdle ||
+            item.reactionSuppressionEmoji !== undefined ||
+            item.guestQueryId) {
+            continue;
+        }
+        if (deps.isQueueItemTransportActive?.(item) === false)
+            continue;
+        if (deps.hasPendingInboundQueueMutationForItem?.(item))
+            return undefined;
+        if (deps.isQueueItemAdmissionReady?.(item) === false)
+            return undefined;
+        return canTelegramMidRunSteerContent(item.content) ? item : undefined;
+    }
+    return undefined;
+}
+function getTelegramMidRunSteerRecordField(value, field) {
+    if (!value || typeof value !== "object")
+        return undefined;
+    return value[field];
+}
+function getTelegramMidRunSteerText(content) {
+    if (typeof content === "string")
+        return content;
+    if (!Array.isArray(content))
+        return undefined;
+    // Pi joins text parts with newlines when it turns content into a steer.
+    return content
+        .filter((part) => getTelegramMidRunSteerRecordField(part, "type") === "text" &&
+        typeof getTelegramMidRunSteerRecordField(part, "text") === "string")
+        .map((part) => getTelegramMidRunSteerRecordField(part, "text"))
+        .join("\n");
+}
+export function createTelegramMidRunSteerRuntime(deps) {
+    let pending;
+    const runSideEffect = (phase, effect) => {
+        try {
+            void Promise.resolve(effect()).catch((error) => {
+                deps.recordRuntimeEvent?.("delivery", error, { phase });
+            });
+        }
+        catch (error) {
+            deps.recordRuntimeEvent?.("delivery", error, { phase });
+        }
+    };
+    const waitForQueuedSteer = async (ctx, injection) => {
+        const deadline = Date.now() + (deps.queueWaitMs ?? TELEGRAM_MID_RUN_STEER_QUEUE_WAIT_MS);
+        while (pending === injection &&
+            !deps.hasPendingMessages(ctx) &&
+            Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+    };
+    return {
+        async onTurnEnd(event, ctx) {
+            if (pending)
+                return;
+            const stopReason = getTelegramMidRunSteerRecordField(getTelegramMidRunSteerRecordField(event, "message"), "stopReason");
+            if (stopReason === "aborted" || stopReason === "error")
+                return;
+            if (deps.isIdle(ctx) ||
+                deps.isCompactionInProgress() ||
+                deps.hasDispatchPending() ||
+                deps.hasPendingMessages(ctx)) {
+                return;
+            }
+            const item = selectTelegramMidRunSteerCandidate(deps.getQueuedItems(), deps);
+            if (!item)
+                return;
+            try {
+                if (deps.commitPromptDispatch && !deps.commitPromptDispatch(item, ctx)) {
+                    throw new Error("Telegram mid-run steer could not be committed durably.");
+                }
+            }
+            catch (error) {
+                deps.recordRuntimeEvent?.("dispatch", error, {
+                    phase: "mid-run-steer-commit",
+                });
+                return;
+            }
+            deps.setQueuedItems(deps.getQueuedItems().filter((queued) => queued !== item));
+            const injection = {
+                item,
+                text: getTelegramMidRunSteerText(item.content) ?? "",
+            };
+            pending = injection;
+            try {
+                deps.sendUserMessage(item.content, { deliverAs: "steer" });
+            }
+            catch (error) {
+                pending = undefined;
+                deps.recordRuntimeEvent?.("dispatch", error, {
+                    phase: "mid-run-steer-send",
+                });
+                runSideEffect("mid-run-steer-undelivered-notice", () => deps.onInjectionUndelivered?.(item));
+                deps.updateStatus(ctx);
+                return;
+            }
+            deps.updateStatus(ctx);
+            await waitForQueuedSteer(ctx, injection);
+        },
+        onMessageStart(event) {
+            if (!pending || !pending.text)
+                return;
+            const message = getTelegramMidRunSteerRecordField(event, "message");
+            if (getTelegramMidRunSteerRecordField(message, "role") !== "user")
+                return;
+            const text = getTelegramMidRunSteerText(getTelegramMidRunSteerRecordField(message, "content"));
+            if (text === undefined || !text.includes(pending.text))
+                return;
+            const { item } = pending;
+            pending = undefined;
+            runSideEffect("mid-run-steer-reaction", () => deps.onInjectionConsumed?.(item));
+        },
+        onAgentSettled() {
+            if (!pending)
+                return;
+            const { item } = pending;
+            pending = undefined;
+            // Never reinject: a steer Pi dropped (for example on abort) may already
+            // sit in the terminal editor, and resending could deliver it twice.
+            deps.recordRuntimeEvent?.("dispatch", new Error("Telegram mid-run steer was not read before the run settled."), { phase: "mid-run-steer-undelivered" });
+            runSideEffect("mid-run-steer-undelivered-notice", () => deps.onInjectionUndelivered?.(item));
+        },
+        isInjectedInput(text) {
+            return pending !== undefined && pending.text === text;
+        },
+        hasPendingInjection() {
+            return pending !== undefined;
+        },
+        reset() {
+            if (!pending)
+                return;
+            pending = undefined;
+            deps.recordRuntimeEvent?.("dispatch", new Error("Telegram mid-run steer was dropped by a session reset."), { phase: "mid-run-steer-reset" });
+        },
+    };
 }

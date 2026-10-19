@@ -127,6 +127,32 @@ function createTelegramBusLeaderRuntime<TContext>(
   return createRawTelegramBusLeaderRuntime({ ...ports, protocolIdentity });
 }
 
+test("follower recovery prefers its acknowledged pending target over a carried former Workspace target", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-telegram-acknowledged-follower-target-"));
+  try {
+    const store = createTelegramTopicTargetStore({ path: join(dir, "state.json"), getNowMs: () => 1000 });
+    const identity = createTelegramWorkspaceBindingIdentity("/repo", 0, "session")!;
+    const former = { chatId: 7, threadId: 42 };
+    const acknowledged = { chatId: 7, threadId: 43 };
+    store.upsertWorkspaceBinding({ ...identity, target: former, slot: "A", updatedAtMs: 900 });
+    store.upsertPendingProvision({ id: "acknowledged", owner: "manual-follower", instanceId: "follower", profileKey: "manual:follower", workspaceBindingKey: identity.bindingKey, target: acknowledged, slot: "A", startedAtMs: 900 });
+    const methods: string[] = [];
+    let syncState = {};
+    const provision = createTelegramBusFollowerTargetProvisioner({
+      getAllowedUserId: () => 7, topicTargetStore: store,
+      async callApi<TResponse>(method: string) { methods.push(method); return { ok: true } as TResponse; },
+      getNowMs: () => 1000, getSyncState: () => syncState, setSyncState: next => { syncState = next; }, recordRuntimeEvent() {},
+    });
+    const result = await provision({ instanceId: "follower", profileKey: "manual:follower", cwd: "/repo", sessionId: "session", target: former, connectedAtMs: 1000 });
+    assert.equal(result?.threadId, acknowledged.threadId);
+    assert.equal(result?.slot, "A");
+    assert.equal(methods.includes("createForumTopic"), false, "an acknowledged creation must not be issued twice");
+    assert.equal(store.getWorkspaceBinding("/repo", "a", "session")?.target.threadId, acknowledged.threadId);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("Bus leader preserves a binding through follower reload handoff", async () => {
   const dir = mkdtempSync(join(tmpdir(), "pi-telegram-follower-gap-"));
   const store = createTelegramTopicTargetStore({
@@ -6210,6 +6236,40 @@ test("Leader publishes and claims follower session replacement only for exact li
     assert.equal(await persisted(), undefined);
     assert.equal((await send("follower.settleSessionReplacement", intent,
       "follower-next:1", "follower-next")).ok, false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Bus leader restores a reloaded former leader's own Workspace Thread", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-telegram-reloaded-leader-"));
+  const store = createTelegramTopicTargetStore({ path: join(dir, "state.json"), getNowMs: () => 1000 });
+  const target = { chatId: 7, threadId: 42 };
+  store.upsertWorkspaceBinding({ ...createTelegramWorkspaceBindingIdentity("/repo", 0, "session")!,
+    target, slot: "N", threadName: "N", updatedAtMs: 1 });
+  store.upsert({ profileKey: "profile:default:cwd:/repo", owner: { kind: "leader", cwd: "/repo",
+    instanceId: "100:1000", telegramProfile: "default" }, instanceId: "100:1000", target,
+    status: "active", createdAtMs: 1, updatedAtMs: 1, slot: "N", threadName: "N" });
+  const calls: string[] = [];
+  const provision = createTelegramBusFollowerTargetProvisioner({
+    getAllowedUserId: () => 7, topicTargetStore: store,
+    async callApi<TResponse>(method: string, body: Record<string, unknown>) {
+      calls.push(`${method}:${body.message_thread_id ?? "new"}`);
+      if (method === "createForumTopic") throw new Error("restore must not create a Thread");
+      return { ok: true } as TResponse;
+    },
+    getSyncState: () => ({}), setSyncState() {}, recordRuntimeEvent() {}, getNowMs: () => 1000,
+  });
+  try {
+    await store.persist();
+    assert.equal(await provision({ instanceId: "200:2000", cwd: "/repo", sessionId: "session",
+      connectedAtMs: 2 }, { existingWorkspaceBindingOnly: true }), undefined);
+    const restored = await provision({ instanceId: "100:2000", cwd: "/repo", sessionId: "session",
+      connectedAtMs: 2 }, { existingWorkspaceBindingOnly: true });
+    assert.equal(restored?.threadId, 42);
+    assert.equal(restored?.slot, "N");
+    const records = store.list().filter((record) => record.target.threadId === 42);
+    assert.deepEqual(records.map((record) => [record.instanceId, record.status]), [["100:2000", "active"]]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

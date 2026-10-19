@@ -771,6 +771,38 @@ test("Telegram bridge API runtime owns reply-markup edits", async () => {
   ]);
 });
 
+test("Telegram bridge API runtime sets one emoji reaction on a message", async () => {
+  const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+  const runtime = createTelegramBridgeApiRuntime({
+    client: createApiRuntimeClient({
+      call: async <TResponse>(
+        method: string,
+        body: Record<string, unknown>,
+      ) => {
+        calls.push({ method, body });
+        return true as TResponse;
+      },
+    }),
+    tempDir: "/tmp",
+    maxFileSizeBytes: 1,
+    tempFileMaxAgeMs: 1,
+    recordRuntimeEvent: () => {},
+  });
+
+  await runtime.setMessageReaction(7, 42, "👀");
+
+  assert.deepEqual(calls, [
+    {
+      method: "setMessageReaction",
+      body: {
+        chat_id: 7,
+        message_id: 42,
+        reaction: [{ type: "emoji", emoji: "👀" }],
+      },
+    },
+  ]);
+});
+
 test("Telegram bridge API runtime coalesces identical actions and suppresses concurrent chat peers", async () => {
   let nowMs = 1000;
   let releaseFirst: (value: boolean) => void = () => {};

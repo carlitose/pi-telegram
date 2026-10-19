@@ -272,6 +272,7 @@ test("Package exports expose only stable public domains", () => {
     "./sections": { types: "./dist/api/sections.d.ts", default: "./dist/api/sections.js" },
     "./status": { types: "./dist/api/status.d.ts", default: "./dist/api/status.js" },
     "./voice": { types: "./dist/api/voice.d.ts", default: "./dist/api/voice.js" },
+    "./controls": { types: "./dist/api/controls.d.ts", default: "./dist/api/controls.js" },
     "./keyboard": { types: "./dist/api/keyboard.d.ts", default: "./dist/api/keyboard.js" },
   });
 });

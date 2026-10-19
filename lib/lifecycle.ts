@@ -28,6 +28,7 @@ import type {
   ToolExecutionEndEvent,
   ToolExecutionStartEvent,
   ToolExecutionUpdateEvent,
+  TurnEndEvent,
   UIPromptEndEvent,
   UIPromptStartEvent,
 } from "./pi.ts";
@@ -119,6 +120,7 @@ export interface TelegramLifecycleRegistrationDeps {
     event: ToolExecutionEndEvent,
     ctx: ExtensionContext,
   ) => Promise<void> | void;
+  onTurnEnd?: (event: TurnEndEvent, ctx: ExtensionContext) => Promise<void> | void;
   onMessageStart: (
     event: { message: TelegramLifecycleMessage },
     ctx: ExtensionContext,
@@ -829,6 +831,12 @@ export function registerTelegramLifecycleHooks(
   pi.on("tool_execution_end", async (event, ctx) => {
     if (!isActive(ctx)) return;
     await deps.onToolExecutionEnd(event, ctx);
+  });
+  // Pi polls steering right after awaiting turn_end handlers, so a steer queued
+  // here reaches the next model call of the same run.
+  pi.on("turn_end", async (event, ctx) => {
+    if (!isActive(ctx)) return;
+    await deps.onTurnEnd?.(event, ctx);
   });
   pi.on("message_start", async (event, ctx) => {
     if (!isActive(ctx)) return;

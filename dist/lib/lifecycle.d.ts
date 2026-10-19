@@ -6,7 +6,7 @@
  */
 import * as BusFollower from "./bus-follower.ts";
 import * as Queue from "./queue.ts";
-import type { AgentEndEvent, AgentSettledEvent, AgentStartEvent, AssistantMessageEvent, BeforeAgentStartEvent, ExtensionAPI, ExtensionContext, InputEvent, MessageEndEvent, SessionBeforeCompactEvent, SessionCompactEvent, SessionCompactFailedEvent, SessionShutdownEvent, SessionStartEvent, ToolExecutionEndEvent, ToolExecutionStartEvent, ToolExecutionUpdateEvent, UIPromptEndEvent, UIPromptStartEvent } from "./pi.ts";
+import type { AgentEndEvent, AgentSettledEvent, AgentStartEvent, AssistantMessageEvent, BeforeAgentStartEvent, ExtensionAPI, ExtensionContext, InputEvent, MessageEndEvent, SessionBeforeCompactEvent, SessionCompactEvent, SessionCompactFailedEvent, SessionShutdownEvent, SessionStartEvent, ToolExecutionEndEvent, ToolExecutionStartEvent, ToolExecutionUpdateEvent, TurnEndEvent, UIPromptEndEvent, UIPromptStartEvent } from "./pi.ts";
 export declare function setResetTransportReplyDedup(fn: () => void): void;
 export declare function createAgentStartDedupHook(inner: (event: AgentStartEvent, ctx: ExtensionContext) => Promise<void>, schedulePublication?: (task: () => Promise<void>) => void): (event: AgentStartEvent, ctx: ExtensionContext) => Promise<void>;
 type TelegramBeforeAgentStartEvent = Omit<BeforeAgentStartEvent, "systemPrompt"> & {
@@ -34,6 +34,7 @@ export interface TelegramLifecycleRegistrationDeps {
     onToolExecutionStart: (event: ToolExecutionStartEvent, ctx: ExtensionContext) => Promise<void> | void;
     onToolExecutionUpdate?: (event: ToolExecutionUpdateEvent, ctx: ExtensionContext) => Promise<void> | void;
     onToolExecutionEnd: (event: ToolExecutionEndEvent, ctx: ExtensionContext) => Promise<void> | void;
+    onTurnEnd?: (event: TurnEndEvent, ctx: ExtensionContext) => Promise<void> | void;
     onMessageStart: (event: {
         message: TelegramLifecycleMessage;
     }, ctx: ExtensionContext) => Promise<void>;

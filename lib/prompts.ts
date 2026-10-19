@@ -168,7 +168,8 @@ type TelegramBeforeAgentStartHook = (
 ) => TelegramBeforeAgentStartResult;
 
 export function buildTelegramBridgeSystemPrompt(options: {
-  prompt: string;
+  /** Absent when an extension's custom message started the run (Pi 1.2.0+). */
+  prompt?: string;
   systemPrompt?: TelegramSystemPrompt | null;
   telegramPrefix?: string;
   localSystemPromptSuffix: string;
@@ -179,7 +180,7 @@ export function buildTelegramBridgeSystemPrompt(options: {
   const telegramHead = telegramPrefix.endsWith("]")
     ? telegramPrefix.slice(0, -1)
     : telegramPrefix;
-  const trimmedPrompt = options.prompt.trimStart();
+  const trimmedPrompt = (options.prompt ?? "").trimStart();
   const telegramTurn =
     trimmedPrompt.startsWith(`${telegramHead}]`) ||
     trimmedPrompt.startsWith(`${telegramHead}|`);
