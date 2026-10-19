@@ -6240,3 +6240,37 @@ test("Leader publishes and claims follower session replacement only for exact li
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("Bus leader restores a reloaded former leader's own Workspace Thread", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-telegram-reloaded-leader-"));
+  const store = createTelegramTopicTargetStore({ path: join(dir, "state.json"), getNowMs: () => 1000 });
+  const target = { chatId: 7, threadId: 42 };
+  store.upsertWorkspaceBinding({ ...createTelegramWorkspaceBindingIdentity("/repo", 0, "session")!,
+    target, slot: "N", threadName: "N", updatedAtMs: 1 });
+  store.upsert({ profileKey: "profile:default:cwd:/repo", owner: { kind: "leader", cwd: "/repo",
+    instanceId: "100:1000", telegramProfile: "default" }, instanceId: "100:1000", target,
+    status: "active", createdAtMs: 1, updatedAtMs: 1, slot: "N", threadName: "N" });
+  const calls: string[] = [];
+  const provision = createTelegramBusFollowerTargetProvisioner({
+    getAllowedUserId: () => 7, topicTargetStore: store,
+    async callApi<TResponse>(method: string, body: Record<string, unknown>) {
+      calls.push(`${method}:${body.message_thread_id ?? "new"}`);
+      if (method === "createForumTopic") throw new Error("restore must not create a Thread");
+      return { ok: true } as TResponse;
+    },
+    getSyncState: () => ({}), setSyncState() {}, recordRuntimeEvent() {}, getNowMs: () => 1000,
+  });
+  try {
+    await store.persist();
+    assert.equal(await provision({ instanceId: "200:2000", cwd: "/repo", sessionId: "session",
+      connectedAtMs: 2 }, { existingWorkspaceBindingOnly: true }), undefined);
+    const restored = await provision({ instanceId: "100:2000", cwd: "/repo", sessionId: "session",
+      connectedAtMs: 2 }, { existingWorkspaceBindingOnly: true });
+    assert.equal(restored?.threadId, 42);
+    assert.equal(restored?.slot, "N");
+    const records = store.list().filter((record) => record.target.threadId === 42);
+    assert.deepEqual(records.map((record) => [record.instanceId, record.status]), [["100:2000", "active"]]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

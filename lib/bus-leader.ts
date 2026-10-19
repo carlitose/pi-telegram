@@ -1114,6 +1114,39 @@ function recordSlowTelegramBusFollowerRegistrationStep(
   );
 }
 
+/**
+ * A runtime reload keeps the process id and changes the instance id. The former runtime has
+ * shut down, so its Thread records for this Workspace session are not a live peer: release
+ * them before the claim, or the reloaded session finds its own Thread taken.
+ */
+function releaseFormerRuntimeOfSameProcess(
+  store: Threads.TelegramTopicTargetStore,
+  registration: TelegramBusInstanceRegistration,
+): void {
+  const cwd = registration.cwd
+    ? Threads.normalizeTelegramWorkspacePath(registration.cwd)
+    : undefined;
+  if (!cwd) return;
+  const sessionId = registration.sessionId === undefined
+    ? undefined
+    : Threads.normalizeTelegramSessionId(registration.sessionId);
+  const targets = store.listWorkspaceBindings()
+    .filter((binding) => binding.cwd === cwd && binding.sessionId === sessionId)
+    .map((binding) => binding.target);
+  const former = new Set(
+    store.list()
+      .filter((record) =>
+        !!record.instanceId &&
+        record.instanceId !== registration.instanceId &&
+        Threads.isSameTelegramProcessInstance(record.instanceId, registration.instanceId) &&
+        targets.some((target) =>
+          target.chatId === record.target.chatId &&
+          target.threadId === record.target.threadId))
+      .map((record) => record.instanceId!),
+  );
+  for (const instanceId of former) store.markOfflineByInstanceId(instanceId);
+}
+
 export function createTelegramBusFollowerTargetProvisioner(
   deps: TelegramBusFollowerTargetProvisionerDeps,
 ): (
@@ -1137,6 +1170,7 @@ export function createTelegramBusFollowerTargetProvisioner(
     const chatId = deps.getAllowedUserId();
     if (typeof chatId !== "number") return registration.target;
     await deps.topicTargetStore.load();
+    releaseFormerRuntimeOfSameProcess(deps.topicTargetStore, registration);
     let capacityUnavailable = false;
     const workspaceIdentity = registration.cwd
       ? deps.topicTargetStore.claimWorkspaceIdentity(
