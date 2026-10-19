@@ -5,7 +5,7 @@
 - Role: `spec`
 - Standalone: true
 ### Children
-- [01 Release the former runtime's records on restore](../tickets/telegram-reload-reconnect/01-release-former-runtime.md)
+- [01 Release the former runtime's records on restore](../tickets/telegram-reload-reconnect/done/01-release-former-runtime.md)
 
 ## Type and evidence
 Bug analysis. The user reported on 2026-10-19 that Telegram "disconnects and then no longer works".
