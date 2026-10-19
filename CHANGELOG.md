@@ -4,7 +4,11 @@
 
 ## Unreleased
 
-No additional changes beyond 0.1.1 below.
+No additional changes beyond 0.1.2 below.
+
+## 0.1.2: A reloaded session keeps its Thread
+
+- `Reload reconnect`: after `/reload` of the leading session, another session took the lead and refused to give the reloaded one its own Thread back, because the record left by the runtime before the reload looked like a live peer. The session stayed disconnected. The leader now releases records of an earlier runtime of the same process for that Workspace session before restoring it.
 
 ## 0.1.1: Runs started by extension messages
 
