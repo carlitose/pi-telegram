@@ -912,6 +912,10 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
         async onMessageStart(event, ctx) {
             if (!isSessionContextActive(ctx))
                 return;
+            // A final-turn steer can continue this run without agent_start. Release
+            // the superseded final slot before progress/preview work queues behind it.
+            if (event.message.role === "assistant")
+                cancelPendingFinalPublication();
             midRunSteer?.onMessageStart(event);
             await messageActivityHooks.onMessageStart(event, ctx);
         },

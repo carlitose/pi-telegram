@@ -1,7 +1,7 @@
 ---
 ticket_schema: 1
 ticket_id: "02"
-execution_mode: AFK
+execution_mode: HITL
 blocked_by:
   - "01"
 ---
@@ -14,30 +14,48 @@ blocked_by:
 - Parent: [telegram-silent-reply-drop.md](../../specs/telegram-silent-reply-drop.md)
 
 ## Parent Spec
-[Telegram final replies dropped without a trace](../../specs/telegram-silent-reply-drop.md), target behavior 3 and 4; slice 02.
+[Telegram final replies dropped without a trace](../../specs/telegram-silent-reply-drop.md), target behavior 3–4 and the October 22 follow-up evidence.
 
 ## What to Build
-A lifecycle-level test with real bridge wiring and fake Pi events that replays the observed sequence: a Telegram prompt (from a prompt button) starts a run, one mid-run steer is injected after a tool turn, a second steer is injected at the final `turn_end` so the run continues, then the run settles. The final reply must reach the original turn's target exactly once. If the test reproduces the drop, fix the root cause. If it does not, keep it as a regression, document the exercised paths here, and leave the ticket open for live evidence from ticket 01's events.
+Release the provisional final-publication reservation when the same agent run starts another
+assistant message after a final-turn steer. Extend the existing real extension integration
+regression with streamed intermediate output after that first completed answer. The final
+reply must reach the original target once, without a circular preview/publication wait.
 
 ## Acceptance Criteria
-- [ ] The test covers both steers, including the one queued at the final `turn_end`.
-- [ ] With the fix, the final reply is sent once to the original target; no duplicate and no other target.
-- [ ] Replaced session, profile or token still blocks delivery and now records ticket 01's event.
-- [ ] `npm run typecheck`, `npm test` and `npm run build:check` pass.
+- [ ] The lifecycle regression covers 0/1/2 steers and streamed intermediate output after the final-turn steer; it fails before the repair.
+- [ ] After the repair, progress and the final answer are sent in order to the original target, once each, without hanging.
+- [ ] A new assistant message releases the superseded reservation; user/tool messages do not release it prematurely.
+- [ ] Replaced session/profile/transport and error/abort delivery retain their existing fences and behavior.
+- [ ] Typecheck, causal regressions, build and build:check pass; the required full test profile remains explicit until exact-head CI runs it.
 
 ## Frontier
-Investigated, not reproduced. In the classic single-process runtime the final reply reaches the turn target once with 0, 1 and 2 mid-run steers, including one queued at the final `turn_end` (regression in `tests/integration.test.ts`). Not exercised: registered-follower delivery through the leader and a prompt-button origin, both present in the incident. Open until a live recurrence yields ticket 01's `final-reply-*` event, which names the failing fence.
+Implementation complete with 24 targeted checks, typecheck and a synchronized build; full exact-head CI and live installation remain pending. The 2026-10-07 investigation (PR #9) did not reproduce the defect and
+left this ticket open. An October 22 offline reproduction proves the publication/preview
+cycle in 0.1.2; the previous integration regression omitted the streamed intermediate output
+that creates the dependency. Ticket 01's diagnostics are integrated in ancestor `298f291`.
+Live incident attribution remains medium confidence: no inspection or mutation of the
+running session is authorized.
 
 ## Gates
-As the parent spec: one PR to `release/reactive-next-0`, 3 hours per attempt, at most 2 attempts; the agent may merge on green checks; npm publication by the user; installation only after the `dbh-crew` lot.
+- Attempt: second repair pass through handoff on `release/reactive-next-0`; retain the first investigation's evidence.
+- Budget/time per attempt: existing 3-hour limit, no external spend; maximum 2 attempts.
+- Approvals: user's “si” (2026-10-22) approves implementation; the later “si per favore, aggiorna quello che c'e locale winbox e mac” approves commit, PR, CI and package updates on those hosts. Merge and npm publication remain open; runtime reload is separate. These are not implementation-start gates.
+- Exact version: none; base `8d745f14edddb72437d2540d03215e5b20dbb809`.
+- Existing blocks: required full tests belong to exact-head CI because heavy full local suites are prohibited; no live installation or reload in this implementation.
 
 ## Step-by-Step Implementation Plan
-1. Locate the lifecycle test harness that drives `agent_start`/`turn_end`/`message_start`/`agent_end` with the mid-run steer runtime.
-2. Write the failing test for the observed sequence.
-3. Fix the smallest owning module; rebuild `dist/`.
+1. Extend the real extension lifecycle regression with streaming after the first completed answer; observe RED.
+2. Release an obsolete provisional reservation on the next assistant-message start; observe GREEN and preserve cross-turn order.
+3. Rebuild committed dist, update the unreleased changelog, review the frozen candidate and produce the skills-only handoff.
 
 ## Testing Plan
-Lifecycle/integration test in the mirrored suite; full `npm test`; live check in a paired Thread after installation (manual, not claimed).
+- Targeted `integration.test.ts` steered-run regression, including its no-steer and one-steer controls.
+- Causal lifecycle binding, cross-turn publication order and dropped-final/fence regressions.
+- `npm run typecheck`, `npm run build`, `npm run build:check`, isolated runtime import.
+- Full `npm test` via Linux/macOS/Windows exact-head CI, not run locally.
+- Live confirmation only after separately approved installation/reload; no synthetic result counts as live delivery.
 
 ## Out of Scope
-- Voice fallback and leader/follower protocol changes unless the reproduction proves them causal.
+- Voice providers, bot/profile configuration, journals, locks and IPC protocol changes.
+- Recovery or replay of already lost replies; restarting or typing into another Pi session.
