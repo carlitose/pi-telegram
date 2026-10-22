@@ -4,7 +4,12 @@
 
 ## Unreleased
 
-No additional changes beyond 0.1.2 below.
+No additional changes beyond 0.1.3 below.
+
+## 0.1.3: Replies survive final-turn steering
+
+- `Steered reply delivery`: a message added while Pi was finishing a reply could make the same run continue, leaving later progress and the final answer waiting behind that reply's obsolete publication slot. Starting another assistant message now releases the slot before preview/progress work queues behind it, preserving final-answer order without resetting the connection or replaying input.
+- `Windows connection`: a temporarily occupied state snapshot could abort connect/resume with `EPERM`. Snapshot commits now use the existing bounded sharing retries while keeping ownership checks and permanent errors intact.
 
 ## 0.1.2: A reloaded session keeps its Thread
 

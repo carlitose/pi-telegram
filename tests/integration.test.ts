@@ -6532,6 +6532,10 @@ test(`Extension runtime delivers the final reply of a run that absorbed ${steers
     }
     throw new Error(`Unexpected Telegram API method: ${method}`);
   });
+  const ctx = createRuntimeExtensionContext({
+    isIdle: () => idle,
+    hasPendingMessages: () => piPending,
+  });
   const steerAt = async (
     turnEnd: Record<string, unknown>,
     ctx: unknown,
@@ -6555,10 +6559,6 @@ test(`Extension runtime delivers the final reply of a run that absorbed ${steers
   try {
     await telegramConfig.write({ botToken: "123:abc", allowedUserId: 77, lastUpdateId: 0 });
     (await getRuntimeTelegramExtension())(pi);
-    const ctx = createRuntimeExtensionContext({
-      isIdle: () => idle,
-      hasPendingMessages: () => piPending,
-    });
     await handlers.get("session_start")?.({}, ctx);
     await commands.get("telegram-connect")?.handler("", ctx);
     await waitForCondition(() => sentMessages.length === 1);
@@ -6588,6 +6588,23 @@ test(`Extension runtime delivers the final reply of a run that absorbed ${steers
     await flushMicrotasks(20);
     if (steers >= 2) await steerAt({ message: firstAnswer, toolResults: [] }, ctx, 3);
 
+    if (steers >= 2) {
+      // A continued run can stream progress before its next final answer. This
+      // publication used to queue behind the first answer's provisional slot.
+      const progress = {
+        role: "assistant", stopReason: "toolUse",
+        content: [{ type: "text", text: "reading after the final-turn steer" }],
+      };
+      await handlers.get("message_start")?.({ message: progress }, ctx);
+      await handlers.get("message_update")?.({ message: progress, assistantMessageEvent: {
+        type: "text_end", contentIndex: 0, content: progress.content[0]!.text,
+      } }, ctx);
+      await handlers.get("message_update")?.({ message: progress, assistantMessageEvent: {
+        type: "toolcall_start", contentIndex: 1,
+      } }, ctx);
+      await handlers.get("message_end")?.({ message: progress }, ctx);
+    }
+
     const finalAnswer = {
       role: "assistant",
       stopReason: "stop",
@@ -6606,11 +6623,23 @@ test(`Extension runtime delivers the final reply of a run that absorbed ${steers
     await waitForCondition(() => delivered("simple final explanation").length > 0);
     assert.equal(delivered("simple final explanation").length, 1);
     for (const call of delivered("simple final explanation")) assert.equal(call.body.chat_id, 99);
-    finalUpdates.resolve(createRuntimeTelegramApiResponse([]));
-    await handlers.get("session_shutdown")?.({}, ctx);
+    if (steers >= 2) {
+      const progress = delivered("reading after the final-turn steer");
+      assert.equal(progress.length, 1);
+      assert.equal(progress[0]!.body.chat_id, 99);
+      assert.ok(apiCalls.indexOf(progress[0]!) < apiCalls.indexOf(delivered("simple final explanation")[0]!));
+      assert.equal(delivered("pushed; the colleague is unknown").length, 0);
+    }
   } finally {
-    restoreFetch();
-    await telegramConfig.restore();
+    busyUpdates.resolve(createRuntimeTelegramApiResponse([]));
+    secondUpdates.resolve(createRuntimeTelegramApiResponse([]));
+    finalUpdates.resolve(createRuntimeTelegramApiResponse([]));
+    try {
+      await handlers.get("session_shutdown")?.({}, ctx);
+    } finally {
+      restoreFetch();
+      await telegramConfig.restore();
+    }
   }
 }, 20_000);
 }

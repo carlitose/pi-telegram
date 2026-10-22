@@ -1346,7 +1346,7 @@ test("Lifecycle binding disconnects only graceful quit and preserves cleanup aft
   ]);
 });
 
-test("Lifecycle binding routes native typing, previews, and normalized activity", async () => {
+test("Lifecycle binding routes native typing, previews, and normalized activity", { timeout: 5000 }, async () => {
   const events: string[] = [];
   const harness = createBindingApiHarness();
   const runtime = Runtime.createTelegramBridgeRuntime();
@@ -1362,6 +1362,7 @@ test("Lifecycle binding routes native typing, previews, and normalized activity"
         ),
       onAssistantEvent: (event: { type: string }) =>
         events.push(`activity:assistant:${event.type}`),
+      onAssistantMessageEnd: () => {},
       onToolStart: (event: { toolName: string }) =>
         events.push(`activity:tool-start:${event.toolName}`),
       onToolUpdate: (event: { toolName: string }) =>
@@ -1420,6 +1421,7 @@ test("Lifecycle binding routes native typing, previews, and normalized activity"
       resetState: () => undefined,
       clear: () => {},
       setPendingText: () => {},
+      seal: () => {},
       onMessageStart: async () => events.push("preview:start"),
       onMessageUpdate: async () => events.push("preview:update"),
     },
@@ -1561,4 +1563,23 @@ test("Lifecycle binding routes native typing, previews, and normalized activity"
   // Pi hooks keep their order without waiting for the independently delivered projection.
   assert.deepEqual(events.filter((event) => !event.startsWith("send:")), expected.filter((event) => !event.startsWith("send:")));
   assert.deepEqual(events.filter((event) => event.startsWith("send:")), expected.filter((event) => event.startsWith("send:")));
+
+  activeTurn = true;
+  await getRequiredBindingHandler(harness.handlers, "message_end")({ message: {
+    role: "assistant", stopReason: "stop", content: [{ type: "text", text: "provisional final" }],
+  } }, {} as ExtensionContext);
+  let publicationReleased = false;
+  const waitingPublication = deps.publicationRuntime.enqueue(async () => { publicationReleased = true; });
+  for (const role of ["user", "toolResult"]) {
+    await getRequiredBindingHandler(harness.handlers, "message_start")(
+      { message: { role } }, {} as ExtensionContext,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(publicationReleased, false, `${role} must retain the provisional final slot`);
+  }
+  await getRequiredBindingHandler(harness.handlers, "message_start")(
+    { message: { role: "assistant" } }, {} as ExtensionContext,
+  );
+  await waitingPublication;
+  assert.equal(publicationReleased, true, "a continued assistant message releases the old final slot");
 });
