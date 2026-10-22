@@ -46,6 +46,18 @@ before that message can queue progress or inherit preview publication dependenci
 actual final answer reserves its current position as before. No timeout, replay or transport
 bypass is introduced; target/session fences and cross-run ordering remain unchanged.
 
+### Windows CI delivery blocker
+Exact-head run `39806230845`, attempts 1 and 2, fails native connect/resume because a
+`state.json` atomic rename throws `EPERM`; the assistant-publication hook is not exercised.
+The existing sharing-retry helper already handles this class of bounded filesystem
+contention elsewhere. Slice 02 also applies its unchanged retry policy at the thread snapshot
+commit boundary: synchronous inside ownership fences, asynchronous on the unfenced path
+so pending filesystem reads can close. A synchronous-only draft failed the native test and
+is retained as failed evidence, not treated as successful verification.
+Injected transient sharing failures must recover; exhausted retries, missing temporary
+files and non-sharing errors must still fail without publishing an invalidation or changing
+the previous durable snapshot. Keep the existing synchronous ownership fence and format.
+
 ## Goal
 A final reply produced for a Telegram turn reaches its exact Telegram target, and when the bridge deliberately does not deliver one it leaves a redacted diagnostic event naming the reason.
 
@@ -70,7 +82,7 @@ Unit tests for each event reason; a lifecycle/integration test for invariant 3; 
 ## Gates
 - **Attempt:** current repair pass through handoff, following the 2026-10-07 pass that did not reproduce the failure (PR #9). Target: `release/reactive-next-0`.
 - **Budget and time per attempt:** retain the existing 3-hour limit and no external spend. **Maximum attempts:** retain 2; this is the second repair pass, not a reset of earlier evidence.
-- **Approvals:** implementation and targeted checks approved by the user's “si” on 2026-10-22; the later “si per favore, aggiorna quello che c'e locale winbox e mac” approves commit, PR, CI and updating the package on those three hosts. Merge and npm publication remain open delivery approvals; runtime reload is separate. No live session is changed by implementation or CI.
+- **Approvals:** implementation and targeted checks approved by the user's “si” on 2026-10-22; the later “si per favore, aggiorna quello che c'e locale winbox e mac” approves commit, PR, CI and updating the package on those three hosts. The subsequent affirmative “certi” approves merge and npm publication after green CI; runtime reload is not approved. No live session is changed by implementation or CI.
 - **Exact version:** none; reproduction uses installed 0.1.2, implementation starts from `8d745f14edddb72437d2540d03215e5b20dbb809`.
 - **Existing blocks found:** no implementation-start block. The repository requires typecheck, generated `dist`, and full tests at its stable gate; the operator forbids heavy full local suites, so full cross-platform validation is deferred to exact-head CI, not waived. The earlier benchmark installation restriction is historical; the newly approved host updates remain deferred until the delivery gates complete. Searched: `AGENTS.md`, `BACKLOG.md`, package scripts and `validate.yml`.
 - **Historical authority:** the October 7 gate allowed one PR merge and publication of `0.1.0-next.1` by the user; it is not treated as a fresh grant to publish or install this repair.

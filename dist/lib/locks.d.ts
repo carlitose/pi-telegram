@@ -93,6 +93,8 @@ export interface TelegramRenameRetryOptions {
 }
 /** Rename one Telegram runtime artifact with bounded Windows sharing retries. */
 export declare function renameTelegramPathWithRetry(sourcePath: string, destinationPath: string, options?: TelegramRenameRetryOptions): boolean;
+/** Unfenced writes must yield so pending filesystem readers can close. */
+export declare function renameTelegramPathWithRetryAsync(sourcePath: string, destinationPath: string): Promise<boolean>;
 export interface TelegramFileTransactionOptions {
     recoveryRename?: typeof renameSync;
     publishRename?: typeof renameSync;

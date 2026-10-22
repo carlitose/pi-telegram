@@ -10,6 +10,8 @@ No additional changes beyond 0.1.3 below.
 
 - `Steered reply delivery`: a message added while Pi was finishing a reply could make the same run continue, leaving later progress and the final answer waiting behind that reply's obsolete publication slot. Starting another assistant message now releases the slot before preview/progress work queues behind it, preserving final-answer order without resetting the connection or replaying input.
 
+- `Windows connection`: a temporarily occupied state snapshot could abort connect/resume with `EPERM`. Snapshot commits now use the existing bounded sharing retries while keeping ownership checks and permanent errors intact.
+
 ## 0.1.2: A reloaded session keeps its Thread
 
 - `Reload reconnect`: after `/reload` of the leading session, another session took the lead and refused to give the reloaded one its own Thread back, because the record left by the runtime before the reload looked like a live peer. The session stayed disconnected. The leader now releases records of an earlier runtime of the same process for that Workspace session before restoring it.
