@@ -825,6 +825,7 @@ export default function (pi: Pi.ExtensionAPI) {
   } = Bindings.createTelegramActivityBindingRuntime({
     generation: deliveryGenerationSeed,
     assistantOutput: {
+      isFinalOnlyEnabled: configControls.isFinalOnlyEnabled,
       prepareTelegramPreview: previewRuntime.preparePublication,
       authority: {
         getPreferredTarget: proactivePushTargetGetter,

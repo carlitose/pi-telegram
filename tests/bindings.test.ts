@@ -1583,3 +1583,64 @@ test("Lifecycle binding routes native typing, previews, and normalized activity"
   await waitingPublication;
   assert.equal(publicationReleased, true, "a continued assistant message releases the old final slot");
 });
+
+
+for (const rendering of ["rich", "html"] as const) {
+  for (const route of ["direct", "follower"] as const) {
+    test(`Final-only binding preserves ${rendering} ${route} finals`, async () => {
+      const bodies: Array<Record<string, unknown>> = [];
+      let preparations = 0;
+      let plans = 0;
+      const target = { chatId: 7, threadId: 42 };
+      const transport = BusApi.createTelegramBusAwareApiRuntime({
+        directRuntime: {
+          sendMessage: async (body: Record<string, unknown>) => { bodies.push(body); return { message_id: bodies.length }; },
+          sendRichMessage: async (body: Record<string, unknown>) => { bodies.push(body); return { message_id: bodies.length }; },
+        } as unknown as TelegramBridgeApiRuntime,
+        ownsDirect: () => route === "direct",
+        callFollowerApi: async (_method, args) => { bodies.push(args[1] as Record<string, unknown>); return { message_id: bodies.length }; },
+      });
+      const binding = createTelegramAssistantOutputBindingRuntime({
+        isFinalOnlyEnabled: () => true,
+        authority: {
+          getPreferredTarget: () => target, getFallbackChatId: () => 7,
+          getTransportStamp: () => "stamp", isTransportStampActive: () => true,
+          ownsDirect: () => route === "direct", getDirectEpoch: () => 1,
+          isFollowerRegistered: () => route === "follower", getFollowerGeneration: () => "follower-1",
+        },
+        sender: {
+          sendMessage: transport.sendMessage, sendRichMessage: transport.sendRichMessage,
+          editMessage: async () => {}, getAssistantRenderingMode: () => rendering,
+          planButtonReply: (markdown) => { plans++; return { markdown }; },
+          execCommand: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
+        },
+        prepareTelegramPreview: () => { preparations++; return undefined; },
+        recordRuntimeEvent: (_kind, error) => { throw error; },
+      });
+      const event = (sequence: number, source: Activity.TelegramAssistantSegmentEvent["source"], placement: Activity.TelegramAssistantSegmentEvent["placement"]) => ({
+        type: "assistant-segment" as const, activityId: "final-only", sequence, source, placement,
+        timestamp: sequence, contentIndex: 0, target, text: `${source}-${placement}`,
+      });
+      binding.runtime.start();
+      for (const [index, source] of (["telegram", "local", "autonomous", "unknown"] as const).entries()) {
+        binding.observeEvent(event(index + 1, source, "intermediate"));
+      }
+      await binding.runtime.waitForIdle();
+      assert.equal(bodies.length, 0);
+      assert.equal(plans, 0);
+      assert.equal(preparations, 0);
+      assert.equal(binding.runtime.hasAdmittedTelegramIntermediate("telegram-intermediate"), false);
+      binding.observeEvent(event(5, "local", "final"));
+      binding.observeEvent(event(6, "autonomous", "terminal-partial"));
+      await binding.runtime.waitForIdle();
+      assert.equal(bodies.length, 2);
+      assert.equal(plans, 2);
+      for (const body of bodies) {
+        assert.equal(body.chat_id, target.chatId);
+        assert.equal(body.message_thread_id, target.threadId);
+        assert.equal(body.disable_notification, undefined);
+      }
+      binding.runtime.stop();
+    });
+  }
+}

@@ -3833,8 +3833,10 @@ for (const liveSource of [false, true]) test(`Real config contention excludes ev
       console.log(JSON.stringify({ contentions, methods }));
     `;
     config.withSourceSerialization(() => {
+      // This child exercises every method against a real contended filesystem lock;
+      // Windows can spend over 10 seconds on those retries even with sleeps disabled.
       const child = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", script],
-        { encoding: "utf8", timeout: 10_000 });
+        { encoding: "utf8", timeout: 60_000 });
       assert.equal(child.error, undefined);
       assert.equal(child.status, 0, child.stderr);
       const result = JSON.parse(child.stdout);

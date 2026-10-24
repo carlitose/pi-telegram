@@ -464,6 +464,7 @@ export function createTelegramAssistantOutputBindingRuntime<
     typeof OutboundHandlers.createTelegramAssistantOutputSender<TTransportStamp>
   >[0];
   waitForActivityIdle?: () => Promise<void>;
+  isFinalOnlyEnabled?: () => boolean;
   prepareTelegramPreview?: () => Activity.TelegramAssistantOutputPreparation | undefined;
   enqueue?: Activity.TelegramActivityPublicationRuntime["enqueue"];
   recordRuntimeEvent: TelegramRuntimeEventRecorder;
@@ -477,6 +478,7 @@ export function createTelegramAssistantOutputBindingRuntime<
     );
   const runtime = Activity.createTelegramAssistantOutputRuntime({
     ...authority,
+    isFinalOnlyEnabled: deps.isFinalOnlyEnabled,
     enqueue: deps.enqueue,
     prepareSend: (event) => event.source === "telegram" ? deps.prepareTelegramPreview?.() : undefined,
     async send(event, authority, isAuthorityActive) {

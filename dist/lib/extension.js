@@ -655,6 +655,7 @@ export default function (pi) {
     const { activityRuntime, activityVerbosityRuntime, assistantOutputRuntime, localPromptEchoRuntime, publicationRuntime, } = Bindings.createTelegramActivityBindingRuntime({
         generation: deliveryGenerationSeed,
         assistantOutput: {
+            isFinalOnlyEnabled: configControls.isFinalOnlyEnabled,
             prepareTelegramPreview: previewRuntime.preparePublication,
             authority: {
                 getPreferredTarget: proactivePushTargetGetter,

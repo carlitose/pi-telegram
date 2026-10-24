@@ -1,6 +1,6 @@
 {
   "name": "@carlitose86/pi-telegram-reactive",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": false,
   "publishConfig": {
     "access": "public",
