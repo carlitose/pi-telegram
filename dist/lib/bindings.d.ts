@@ -134,6 +134,7 @@ export declare function createTelegramAssistantOutputBindingRuntime<TTransportSt
     };
     sender: Parameters<typeof OutboundHandlers.createTelegramAssistantOutputSender<TTransportStamp>>[0];
     waitForActivityIdle?: () => Promise<void>;
+    isFinalOnlyEnabled?: () => boolean;
     prepareTelegramPreview?: () => Activity.TelegramAssistantOutputPreparation | undefined;
     enqueue?: Activity.TelegramActivityPublicationRuntime["enqueue"];
     recordRuntimeEvent: TelegramRuntimeEventRecorder;

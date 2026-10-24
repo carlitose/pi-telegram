@@ -628,9 +628,26 @@ export function createTelegramConfigStore(options = {}) {
         },
     };
 }
+export function createTelegramFinalOnlyChecker(configStore) {
+    return () => configStore.get().assistant?.finalOnly === true;
+}
+export function createTelegramFinalOnlySetter(configStore) {
+    return async (enabled) => {
+        await loadLatestTelegramConfig(configStore);
+        const current = configStore.get();
+        const config = {
+            ...current,
+            assistant: { ...current.assistant, finalOnly: enabled },
+        };
+        configStore.set(config);
+        await configStore.persist(config);
+    };
+}
 export function createTelegramDraftPreviewsChecker(configStore) {
     return () => {
         const config = configStore.get();
+        if (config.assistant?.finalOnly === true)
+            return false;
         return (config.assistant?.draftPreviews ??
             config.draftPreviews ??
             config.richDraftPreviews ??
@@ -671,6 +688,8 @@ export function createTelegramAssistantRenderingModeSetter(configStore) {
 export function createTelegramActivityVerbosityGetter(configStore) {
     return () => {
         const assistant = configStore.get().assistant;
+        if (assistant?.finalOnly === true)
+            return "quiet";
         if (assistant?.activity !== undefined) {
             if (assistant.activity === "thinking" ||
                 assistant.activity === "tools" ||
@@ -827,6 +846,8 @@ export function createTelegramAutomaticThreadCleanupSetter(configStore) {
 }
 export function createTelegramConfigControls(configStore) {
     return {
+        isFinalOnlyEnabled: createTelegramFinalOnlyChecker(configStore),
+        setFinalOnlyEnabled: createTelegramFinalOnlySetter(configStore),
         areDraftPreviewsEnabled: createTelegramDraftPreviewsChecker(configStore),
         setDraftPreviewsEnabled: createTelegramDraftPreviewsSetter(configStore),
         getAssistantRenderingMode: createTelegramAssistantRenderingModeGetter(configStore),

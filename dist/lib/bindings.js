@@ -260,6 +260,7 @@ export function createTelegramAssistantOutputBindingRuntime(deps) {
     const sendOutput = OutboundHandlers.createTelegramAssistantOutputSender(deps.sender);
     const runtime = Activity.createTelegramAssistantOutputRuntime({
         ...authority,
+        isFinalOnlyEnabled: deps.isFinalOnlyEnabled,
         enqueue: deps.enqueue,
         prepareSend: (event) => event.source === "telegram" ? deps.prepareTelegramPreview?.() : undefined,
         async send(event, authority, isAuthorityActive) {

@@ -24,6 +24,7 @@ export type TelegramSettingsMenuReplyMarkup = TelegramInlineKeyboardMarkup;
 export interface TelegramSettingsStateDeps {
   getThreadDisplayMode?: () => TelegramThreadDisplayMode | undefined;
   isThreadDisplayCustom?: () => boolean;
+  isFinalOnlyEnabled?: () => boolean;
   areDraftPreviewsEnabled: () => boolean;
   getAssistantRenderingMode: () => TelegramAssistantRenderingMode;
   getActivityVerbosity: () => TelegramActivityVerbosity;
@@ -35,6 +36,7 @@ export interface TelegramSettingsStateDeps {
 
 export interface TelegramSettingsMutationDeps extends TelegramSettingsStateDeps {
   setThreadDisplayMode?: (mode: TelegramThreadDisplayMode) => Promise<void>;
+  setFinalOnlyEnabled?: (enabled: boolean) => Promise<void>;
   setDraftPreviewsEnabled: (enabled: boolean) => Promise<void>;
   setAssistantRenderingMode: (
     mode: TelegramAssistantRenderingMode,
@@ -316,6 +318,7 @@ export function buildTelegramSettingsMenuReplyMarkup(
   activityVerbosity: TelegramActivityVerbosity = "quiet",
   threadDisplayMode?: TelegramThreadDisplayMode,
   threadDisplayCustom = false,
+  finalOnlyEnabled?: boolean,
 ): TelegramSettingsMenuReplyMarkup {
   const hasRenderingMode =
     assistantRenderingModeOrVoiceReplyMode === "rich" ||
@@ -370,6 +373,10 @@ export function buildTelegramSettingsMenuReplyMarkup(
       callback_data: "settings:open:time-injection",
     },
   ];
+  if (finalOnlyEnabled !== undefined) settingsButtons.push({
+    text: `⚙️ Final replies only: ${finalOnlyEnabled ? "on" : "off"}`,
+    callback_data: `settings:set:final-only:${finalOnlyEnabled ? "off" : "on"}`,
+  });
   if (threadDisplayMode) settingsButtons.push(
     {
       text: `🧹 Thread cleanup: ${automaticThreadCleanupEnabled ? "on" : "off"}`,
@@ -414,6 +421,7 @@ export async function openTelegramSettingsMenu<
       deps.getActivityVerbosity(),
       deps.getThreadDisplayMode?.(),
       deps.isThreadDisplayCustom?.() ?? false,
+      deps.isFinalOnlyEnabled?.(),
     ),
   );
   if (messageId === undefined) return;
@@ -577,6 +585,7 @@ export async function updateTelegramSettingsMenuMessage(
       deps.getActivityVerbosity(),
       deps.getThreadDisplayMode?.(),
       deps.isThreadDisplayCustom?.() ?? false,
+      deps.isFinalOnlyEnabled?.(),
     ),
   );
 }
@@ -677,6 +686,17 @@ export async function handleTelegramSettingsMenuCallbackAction(
       buildThreadDisplaySettingsReplyMarkup(mode, deps.isThreadDisplayCustom?.() ?? false),
     );
     await deps.answerCallbackQuery(callbackQueryId);
+    return true;
+  }
+  if (data === "settings:set:final-only:on" || data === "settings:set:final-only:off") {
+    if (!deps.setFinalOnlyEnabled) {
+      await deps.answerCallbackQuery(callbackQueryId, "Final replies only is unavailable.");
+      return true;
+    }
+    const enabled = data.endsWith(":on");
+    await deps.setFinalOnlyEnabled(enabled);
+    await updateTelegramSettingsMenuMessage(deps, deps.sectionRegistry);
+    await deps.answerCallbackQuery(callbackQueryId, `Final replies only ${enabled ? "enabled" : "disabled"}`);
     return true;
   }
   if (data === "settings:list") {
@@ -890,6 +910,7 @@ export function createTelegramSettingsMenuRuntime<
           isAutomaticThreadCleanupEnabled: deps.isAutomaticThreadCleanupEnabled,
           getThreadDisplayMode: deps.getThreadDisplayMode,
           isThreadDisplayCustom: deps.isThreadDisplayCustom,
+          isFinalOnlyEnabled: deps.isFinalOnlyEnabled,
           sendSettingsMenu: (state, text, replyMarkup) =>
             deps.sendInteractiveMessage(
               state.chatId,
@@ -915,6 +936,7 @@ export function createTelegramSettingsMenuRuntime<
           isAutomaticThreadCleanupEnabled: deps.isAutomaticThreadCleanupEnabled,
           getThreadDisplayMode: deps.getThreadDisplayMode,
           isThreadDisplayCustom: deps.isThreadDisplayCustom,
+          isFinalOnlyEnabled: deps.isFinalOnlyEnabled,
           updateSettingsMessage: (text, replyMarkup) =>
             deps.editInteractiveMessage(
               state.chatId,
@@ -960,7 +982,9 @@ export function createTelegramSettingsMenuRuntime<
         isAutomaticThreadCleanupEnabled: deps.isAutomaticThreadCleanupEnabled,
         getThreadDisplayMode: deps.getThreadDisplayMode,
         isThreadDisplayCustom: deps.isThreadDisplayCustom,
+        isFinalOnlyEnabled: deps.isFinalOnlyEnabled,
         setThreadDisplayMode: deps.setThreadDisplayMode,
+        setFinalOnlyEnabled: deps.setFinalOnlyEnabled,
         setDraftPreviewsEnabled: deps.setDraftPreviewsEnabled,
         setAssistantRenderingMode: deps.setAssistantRenderingMode,
         setActivityVerbosity: deps.setActivityVerbosity,

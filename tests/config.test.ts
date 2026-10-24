@@ -1991,3 +1991,32 @@ test("Pairing admission hashes the resolved token reference", async () => {
     await rm(agentDir, { recursive: true, force: true });
   }
 });
+
+
+test("Final-only policy persists without replacing activity, draft or profile preferences", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "telegram-final-only-"));
+  const configPath = join(dir, "telegram.json");
+  const initial = { profiles: { default: { botToken: "fixture-token", allowedUserId: 42 } },
+    assistant: { activity: "tools", draftPreviews: true, rendering: "html" }, voice: { replyMode: "mirror" } };
+  try {
+    await writeFile(configPath, JSON.stringify(initial));
+    const store = createTelegramConfigStore({ agentDir: dir, configPath });
+    await store.load();
+    const controls = createTelegramConfigControls(store);
+    assert.equal(controls.isFinalOnlyEnabled(), false);
+    await controls.setFinalOnlyEnabled(true);
+    assert.equal(controls.isFinalOnlyEnabled(), true);
+    assert.equal(controls.areDraftPreviewsEnabled(), false);
+    assert.equal(controls.getActivityVerbosity(), "quiet");
+    assert.equal(controls.getAssistantRenderingMode(), "html");
+    assert.equal(controls.getVoiceReplyMode(), "mirror");
+    assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), {
+      ...initial, assistant: { ...initial.assistant, finalOnly: true },
+    });
+    await controls.setFinalOnlyEnabled(false);
+    assert.equal(controls.areDraftPreviewsEnabled(), true);
+    assert.equal(controls.getActivityVerbosity(), "tools");
+    await store.load();
+    assert.equal(controls.isFinalOnlyEnabled(), false);
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});

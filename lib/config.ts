@@ -196,6 +196,7 @@ export interface TelegramConfig {
   attachmentHandlers?: TelegramInboundHandlerConfig[];
   outboundHandlers?: TelegramOutboundHandlerConfig[];
   assistant?: {
+    finalOnly?: boolean;
     draftPreviews?: boolean;
     rendering?: TelegramAssistantRenderingMode;
     activity?: TelegramActivityVerbosity;
@@ -963,11 +964,33 @@ export function createTelegramConfigStore(
   };
 }
 
+export function createTelegramFinalOnlyChecker(
+  configStore: Pick<TelegramConfigStore, "get">,
+): () => boolean {
+  return () => configStore.get().assistant?.finalOnly === true;
+}
+
+export function createTelegramFinalOnlySetter(
+  configStore: TelegramMutableConfigStore,
+): (enabled: boolean) => Promise<void> {
+  return async (enabled) => {
+    await loadLatestTelegramConfig(configStore);
+    const current = configStore.get();
+    const config = {
+      ...current,
+      assistant: { ...current.assistant, finalOnly: enabled },
+    };
+    configStore.set(config);
+    await configStore.persist(config);
+  };
+}
+
 export function createTelegramDraftPreviewsChecker(
   configStore: Pick<TelegramConfigStore, "get">,
 ): () => boolean {
   return () => {
     const config = configStore.get();
+    if (config.assistant?.finalOnly === true) return false;
     return (
       config.assistant?.draftPreviews ??
       config.draftPreviews ??
@@ -1027,6 +1050,7 @@ export function createTelegramActivityVerbosityGetter(
 ): () => TelegramActivityVerbosity {
   return () => {
     const assistant = configStore.get().assistant;
+    if (assistant?.finalOnly === true) return "quiet";
     if (assistant?.activity !== undefined) {
       if (
         assistant.activity === "thinking" ||
@@ -1249,6 +1273,8 @@ export function createTelegramConfigControls(
   configStore: TelegramMutableConfigStore,
 ) {
   return {
+    isFinalOnlyEnabled: createTelegramFinalOnlyChecker(configStore),
+    setFinalOnlyEnabled: createTelegramFinalOnlySetter(configStore),
     areDraftPreviewsEnabled: createTelegramDraftPreviewsChecker(configStore),
     setDraftPreviewsEnabled: createTelegramDraftPreviewsSetter(configStore),
     getAssistantRenderingMode:

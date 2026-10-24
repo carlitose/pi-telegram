@@ -4,7 +4,11 @@
 
 ## Unreleased
 
-No additional changes beyond 0.1.3 below.
+No additional changes beyond 0.1.4 below.
+
+## 0.1.4: Final replies only
+
+- `Final-only replies`: Settings can now hide intermediate commentary, technical activity and streamed drafts with one switch, while final answers, errors and confirmation requests remain visible. Stored activity/draft preferences are restored when disabled. Hidden commentary is not mistaken for an already-published answer, preserving empty-final fallback and exact-target Rich/HTML delivery.
 
 ## 0.1.3: Replies survive final-turn steering
 

@@ -575,3 +575,35 @@ test("Settings runtime opens menus and rehydrates stale callback state", async (
     "answer:Time injection: hidden",
   ]);
 });
+
+
+test("Final-only Settings toggle awaits persistence, refreshes its row and acknowledges", async () => {
+  const calls: string[] = [];
+  let enabled = false;
+  const deps: TelegramSettingsMenuCallbackDeps = {
+    isFinalOnlyEnabled: () => enabled,
+    async setFinalOnlyEnabled(value) { calls.push(`persist:${value}`); enabled = value; },
+    areDraftPreviewsEnabled: () => !enabled,
+    getAssistantRenderingMode: () => "rich", getActivityVerbosity: () => enabled ? "quiet" : "verbose",
+    getTimeInjectionMode: () => "hidden", getVoiceReplyMode: () => "manual",
+    isVoiceReplyModeConfigured: () => false, isAutomaticThreadCleanupEnabled: () => false,
+    async setDraftPreviewsEnabled() {}, async setAssistantRenderingMode() {},
+    async setActivityVerbosity() {}, async setVoiceReplyMode() {},
+    async setTimeInjectionMode() {}, async setAutomaticThreadCleanupEnabled() {},
+    async updateSettingsMessage(_text, markup) {
+      const row = markup.inline_keyboard.flat().find((button) => button.text.startsWith("⚙️ Final replies only:"));
+      assert.ok(row);
+      assert.equal(row.callback_data, `settings:set:final-only:${enabled ? "off" : "on"}`);
+      calls.push(`render:${enabled}`);
+    },
+    async answerCallbackQuery() { calls.push("ack"); },
+  };
+  for (const value of ["on", "off"]) {
+    assert.equal(await handleTelegramSettingsMenuCallbackAction("q", `settings:set:final-only:${value}`, deps), true);
+  }
+  assert.deepEqual(calls, ["persist:true", "render:true", "ack", "persist:false", "render:false", "ack"]);
+  calls.length = 0;
+  deps.setFinalOnlyEnabled = async () => { throw new Error("disk unavailable"); };
+  await assert.rejects(handleTelegramSettingsMenuCallbackAction("q", "settings:set:final-only:on", deps), /disk unavailable/);
+  assert.deepEqual(calls, []);
+});
