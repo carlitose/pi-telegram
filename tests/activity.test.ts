@@ -1219,3 +1219,87 @@ test("Local prompt echo sends one silent plain-text message to the authorized ta
   );
   assert.equal(bodies.length, 1);
 });
+
+
+test("Final-only projection suppresses every intermediate before admission and preserves terminal output", async () => {
+  for (const source of ["telegram", "local", "autonomous", "unknown"] as const) {
+    const sent: string[] = [];
+    let preparations = 0;
+    let reservations = 0;
+    let finalOnly = true;
+    const runtime = createTelegramAssistantOutputRuntime({
+      isFinalOnlyEnabled: () => finalOnly,
+      canDeliver: () => true,
+      prepareSend: () => { preparations++; return undefined; },
+      enqueue: async (task) => { reservations++; await task(); },
+      send: async (event) => { sent.push(event.placement); },
+    });
+    runtime.start();
+    runtime.accept(assistantSegment(1, { source, placement: "intermediate" }));
+    assert.equal(runtime.hasAdmittedTelegramIntermediate("segment-1"), false);
+    assert.equal(preparations, 0);
+    assert.equal(reservations, 0);
+    runtime.accept(assistantSegment(2, { source, placement: "final" }));
+    runtime.accept(assistantSegment(3, { source, placement: "terminal-partial" }));
+    await runtime.waitForIdle();
+    assert.deepEqual(sent, source === "telegram" ? [] : ["final", "terminal-partial"]);
+    finalOnly = false;
+    runtime.accept(assistantSegment(4, { source, placement: "intermediate" }));
+    await runtime.waitForIdle();
+    assert.equal(sent.at(-1), "intermediate");
+    runtime.stop();
+  }
+});
+
+test("Final-only changes recheck queued commentary without hiding the final fallback", async () => {
+  let finalOnly = false;
+  let queued: (() => Promise<void>) | undefined;
+  const sent: string[] = [];
+  const runtime = createTelegramAssistantOutputRuntime({
+    isFinalOnlyEnabled: () => finalOnly,
+    canDeliver: () => true,
+    enqueue: async (task) => { queued = task; },
+    send: async (event) => { sent.push(event.text); },
+  });
+  runtime.start();
+  runtime.accept(assistantSegment(1, { source: "telegram" }));
+  assert.equal(runtime.hasAdmittedTelegramIntermediate("segment-1"), true);
+  finalOnly = true;
+  await queued!();
+  assert.deepEqual(sent, []);
+  assert.equal(runtime.hasAdmittedTelegramIntermediate("segment-1"), false);
+  finalOnly = false;
+  runtime.accept(assistantSegment(2, { source: "telegram", placement: "intermediate" }));
+  await queued!();
+  finalOnly = true;
+  assert.equal(runtime.hasAdmittedTelegramIntermediate("segment-2"), true);
+  runtime.stop();
+});
+
+
+test("Final-only enabled during async send preparation does not mark hidden commentary delivered", async () => {
+  let finalOnly = false;
+  let release!: () => void;
+  let started!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const preparing = new Promise<void>((resolve) => { started = resolve; });
+  const sent: string[] = [];
+  const runtime = createTelegramAssistantOutputRuntime({
+    isFinalOnlyEnabled: () => finalOnly,
+    canDeliver: () => true,
+    send: async (event, _authority, isActive) => {
+      started();
+      await gate;
+      if (isActive()) sent.push(event.text);
+    },
+  });
+  runtime.start();
+  runtime.accept(assistantSegment(1, { source: "telegram" }));
+  await preparing;
+  finalOnly = true;
+  release();
+  await runtime.waitForIdle();
+  assert.deepEqual(sent, []);
+  assert.equal(runtime.hasAdmittedTelegramIntermediate("segment-1"), false);
+  runtime.stop();
+});

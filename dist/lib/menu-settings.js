@@ -124,7 +124,7 @@ export function buildTimeInjectionModeSettingsText(mode) {
         "<code>-</code> <code>interval</code> (default): add time at most once per chat interval (1 hour unless configured).",
     ].join("\n");
 }
-export function buildTelegramSettingsMenuReplyMarkup(draftPreviewsEnabled, assistantRenderingModeOrVoiceReplyMode, voiceReplyModeOrTimeInjectionMode, timeInjectionModeOrSectionRegistry, sectionRegistryOrVoiceReplyModeConfigured, voiceReplyModeConfigured = true, automaticThreadCleanupEnabled = true, activityVerbosity = "quiet", threadDisplayMode, threadDisplayCustom = false) {
+export function buildTelegramSettingsMenuReplyMarkup(draftPreviewsEnabled, assistantRenderingModeOrVoiceReplyMode, voiceReplyModeOrTimeInjectionMode, timeInjectionModeOrSectionRegistry, sectionRegistryOrVoiceReplyModeConfigured, voiceReplyModeConfigured = true, automaticThreadCleanupEnabled = true, activityVerbosity = "quiet", threadDisplayMode, threadDisplayCustom = false, finalOnlyEnabled, normalTextOnlyEnabled) {
     const hasRenderingMode = assistantRenderingModeOrVoiceReplyMode === "rich" ||
         assistantRenderingModeOrVoiceReplyMode === "html";
     const assistantRenderingMode = hasRenderingMode ? assistantRenderingModeOrVoiceReplyMode : "rich";
@@ -167,6 +167,16 @@ export function buildTelegramSettingsMenuReplyMarkup(draftPreviewsEnabled, assis
             callback_data: "settings:open:time-injection",
         },
     ];
+    if (normalTextOnlyEnabled !== undefined)
+        settingsButtons.push({
+            text: `⚙️ Normal text only: ${normalTextOnlyEnabled ? "on" : "off"}`,
+            callback_data: `settings:set:normal-text-only:${normalTextOnlyEnabled ? "off" : "on"}`,
+        });
+    if (finalOnlyEnabled !== undefined)
+        settingsButtons.push({
+            text: `⚙️ Final replies only: ${finalOnlyEnabled ? "on" : "off"}`,
+            callback_data: `settings:set:final-only:${finalOnlyEnabled ? "off" : "on"}`,
+        });
     if (threadDisplayMode)
         settingsButtons.push({
             text: `🧹 Thread cleanup: ${automaticThreadCleanupEnabled ? "on" : "off"}`,
@@ -187,7 +197,7 @@ export function buildTelegramSettingsMenuReplyMarkup(draftPreviewsEnabled, assis
 }
 export async function openTelegramSettingsMenu(deps, sectionRegistry) {
     const state = await deps.getModelMenuState();
-    const messageId = await deps.sendSettingsMenu(state, buildTelegramSettingsMenuText(), buildTelegramSettingsMenuReplyMarkup(deps.areDraftPreviewsEnabled(), deps.getAssistantRenderingMode(), deps.getVoiceReplyMode(), deps.getTimeInjectionMode(), sectionRegistry, deps.isVoiceReplyModeConfigured(), deps.isAutomaticThreadCleanupEnabled(), deps.getActivityVerbosity(), deps.getThreadDisplayMode?.(), deps.isThreadDisplayCustom?.() ?? false));
+    const messageId = await deps.sendSettingsMenu(state, buildTelegramSettingsMenuText(), buildTelegramSettingsMenuReplyMarkup(deps.areDraftPreviewsEnabled(), deps.getAssistantRenderingMode(), deps.getVoiceReplyMode(), deps.getTimeInjectionMode(), sectionRegistry, deps.isVoiceReplyModeConfigured(), deps.isAutomaticThreadCleanupEnabled(), deps.getActivityVerbosity(), deps.getThreadDisplayMode?.(), deps.isThreadDisplayCustom?.() ?? false, deps.isFinalOnlyEnabled?.(), deps.isNormalTextOnlyEnabled?.()));
     if (messageId === undefined)
         return;
     state.messageId = messageId;
@@ -308,7 +318,7 @@ export function buildVoiceReplyModeSettingsReplyMarkup(mode, configured = true) 
     };
 }
 export async function updateTelegramSettingsMenuMessage(deps, sectionRegistry) {
-    await deps.updateSettingsMessage(buildTelegramSettingsMenuText(), buildTelegramSettingsMenuReplyMarkup(deps.areDraftPreviewsEnabled(), deps.getAssistantRenderingMode(), deps.getVoiceReplyMode(), deps.getTimeInjectionMode(), sectionRegistry, deps.isVoiceReplyModeConfigured(), deps.isAutomaticThreadCleanupEnabled(), deps.getActivityVerbosity(), deps.getThreadDisplayMode?.(), deps.isThreadDisplayCustom?.() ?? false));
+    await deps.updateSettingsMessage(buildTelegramSettingsMenuText(), buildTelegramSettingsMenuReplyMarkup(deps.areDraftPreviewsEnabled(), deps.getAssistantRenderingMode(), deps.getVoiceReplyMode(), deps.getTimeInjectionMode(), sectionRegistry, deps.isVoiceReplyModeConfigured(), deps.isAutomaticThreadCleanupEnabled(), deps.getActivityVerbosity(), deps.getThreadDisplayMode?.(), deps.isThreadDisplayCustom?.() ?? false, deps.isFinalOnlyEnabled?.(), deps.isNormalTextOnlyEnabled?.()));
 }
 export async function updateAutomaticThreadCleanupSettingsMessage(deps) {
     const enabled = deps.isAutomaticThreadCleanupEnabled();
@@ -365,6 +375,28 @@ export async function handleTelegramSettingsMenuCallbackAction(callbackQueryId, 
         }
         await deps.updateSettingsMessage(buildThreadDisplaySettingsText(mode, deps.isThreadDisplayCustom?.() ?? false), buildThreadDisplaySettingsReplyMarkup(mode, deps.isThreadDisplayCustom?.() ?? false));
         await deps.answerCallbackQuery(callbackQueryId);
+        return true;
+    }
+    if (data === "settings:set:normal-text-only:on" || data === "settings:set:normal-text-only:off") {
+        if (!deps.setNormalTextOnlyEnabled) {
+            await deps.answerCallbackQuery(callbackQueryId, "⚙️ Normal text only is unavailable.");
+            return true;
+        }
+        const enabled = data.endsWith(":on");
+        await deps.setNormalTextOnlyEnabled(enabled);
+        await updateTelegramSettingsMenuMessage(deps, deps.sectionRegistry);
+        await deps.answerCallbackQuery(callbackQueryId, `⚙️ Normal text only ${enabled ? "enabled" : "disabled"}.`);
+        return true;
+    }
+    if (data === "settings:set:final-only:on" || data === "settings:set:final-only:off") {
+        if (!deps.setFinalOnlyEnabled) {
+            await deps.answerCallbackQuery(callbackQueryId, "Final replies only is unavailable.");
+            return true;
+        }
+        const enabled = data.endsWith(":on");
+        await deps.setFinalOnlyEnabled(enabled);
+        await updateTelegramSettingsMenuMessage(deps, deps.sectionRegistry);
+        await deps.answerCallbackQuery(callbackQueryId, `Final replies only ${enabled ? "enabled" : "disabled"}`);
         return true;
     }
     if (data === "settings:list") {
@@ -535,6 +567,8 @@ export function createTelegramSettingsMenuRuntime(deps, sectionRegistry) {
                 isAutomaticThreadCleanupEnabled: deps.isAutomaticThreadCleanupEnabled,
                 getThreadDisplayMode: deps.getThreadDisplayMode,
                 isThreadDisplayCustom: deps.isThreadDisplayCustom,
+                isFinalOnlyEnabled: deps.isFinalOnlyEnabled,
+                isNormalTextOnlyEnabled: deps.isNormalTextOnlyEnabled,
                 sendSettingsMenu: (state, text, replyMarkup) => deps.sendInteractiveMessage(state.chatId, text, "html", replyMarkup),
                 storeModelMenuState: deps.storeModelMenuState,
             }, sectionRegistry);
@@ -551,6 +585,8 @@ export function createTelegramSettingsMenuRuntime(deps, sectionRegistry) {
                 isAutomaticThreadCleanupEnabled: deps.isAutomaticThreadCleanupEnabled,
                 getThreadDisplayMode: deps.getThreadDisplayMode,
                 isThreadDisplayCustom: deps.isThreadDisplayCustom,
+                isFinalOnlyEnabled: deps.isFinalOnlyEnabled,
+                isNormalTextOnlyEnabled: deps.isNormalTextOnlyEnabled,
                 updateSettingsMessage: (text, replyMarkup) => deps.editInteractiveMessage(state.chatId, state.messageId, text, "html", replyMarkup),
             }, sectionRegistry);
         },
@@ -581,7 +617,11 @@ export function createTelegramSettingsMenuRuntime(deps, sectionRegistry) {
                 isAutomaticThreadCleanupEnabled: deps.isAutomaticThreadCleanupEnabled,
                 getThreadDisplayMode: deps.getThreadDisplayMode,
                 isThreadDisplayCustom: deps.isThreadDisplayCustom,
+                isFinalOnlyEnabled: deps.isFinalOnlyEnabled,
+                isNormalTextOnlyEnabled: deps.isNormalTextOnlyEnabled,
                 setThreadDisplayMode: deps.setThreadDisplayMode,
+                setFinalOnlyEnabled: deps.setFinalOnlyEnabled,
+                setNormalTextOnlyEnabled: deps.setNormalTextOnlyEnabled,
                 setDraftPreviewsEnabled: deps.setDraftPreviewsEnabled,
                 setAssistantRenderingMode: deps.setAssistantRenderingMode,
                 setActivityVerbosity: deps.setActivityVerbosity,

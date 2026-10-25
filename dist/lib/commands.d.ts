@@ -51,6 +51,7 @@ export declare function findTelegramExtensionCommand(name: string | undefined): 
 export declare function clearTelegramExtensionCommands(): void;
 export declare const TELEGRAM_COMMAND_EMOJI: {
     readonly start: "🟢";
+    readonly pi: "⌨️";
     readonly status: "📊";
     readonly model: "🤖";
     readonly thinking: "🧠";
@@ -154,7 +155,7 @@ export declare function createTelegramThreadDisplayNameRenameBinding(): {
     rename: TelegramThreadDisplayNameRenamePort;
 };
 export declare function registerTelegramBridgeCommands(pi: ExtensionAPI, deps: TelegramBridgeCommandRegistrationDeps): void;
-export declare const TELEGRAM_RESERVED_COMMAND_NAMES: readonly ["stop", "name", "new", "abort", "next", "continue", "later", "status", "queue", "compact", "model", "thinking", "settings", "help", "start"];
+export declare const TELEGRAM_RESERVED_COMMAND_NAMES: readonly ["stop", "name", "new", "abort", "next", "continue", "later", "status", "queue", "compact", "model", "thinking", "settings", "help", "start", "pi"];
 export type TelegramReservedCommandName = (typeof TELEGRAM_RESERVED_COMMAND_NAMES)[number];
 export declare function isTelegramReservedCommandName(commandName: string | undefined): commandName is TelegramReservedCommandName;
 export type TelegramCommandAction = {
@@ -380,6 +381,7 @@ export interface TelegramCommandOrPromptRuntimeDeps<TMessage, TContext> {
     shouldIgnoreMessages?: (messages: TMessage[]) => boolean;
     consumeThreadNameInput?: (messages: TMessage[], ctx: TContext) => Promise<boolean>;
     handleCommand: (commandName: string | undefined, message: TMessage, ctx: TContext, commandArgs?: string) => Promise<boolean>;
+    executePiCommand?: (command: ParsedTelegramCommand, messages: TMessage[], ctx: TContext, rawText: string) => Promise<boolean>;
     executeExtensionCommand?: (command: ParsedTelegramCommand, message: TMessage, ctx: TContext) => Promise<boolean>;
     expandPromptTemplateCommand?: (commandName: string, args: string) => string | undefined;
     replaceMessageText: (message: TMessage, text: string) => TMessage;
@@ -521,6 +523,10 @@ export declare const TELEGRAM_COMMAND_ACTIONS: {
         readonly kind: "help";
         readonly commandName: "start";
         readonly executionMode: "immediate";
+    };
+    readonly pi: {
+        readonly kind: "ignore";
+        readonly executionMode: "ignored";
     };
 };
 export declare function buildTelegramCommandAction(commandName: string | undefined): TelegramCommandAction;
@@ -698,13 +704,14 @@ export declare function createTelegramSessionActionAssembly(deps: TelegramSessio
         onSessionStart: (ctx: Pi.ExtensionContext) => void;
     };
 };
+export type TelegramSessionCommandAction = (ctx: Pi.ExtensionCommandContext) => Promise<void>;
 export interface TelegramSessionActionRuntime {
     register: () => void;
     scheduleAfterUpdate: (updateId: number, target: {
         chatId: number;
         threadId?: number;
         messageId: number;
-    }) => boolean;
+    }, run?: TelegramSessionCommandAction) => boolean;
     onUpdateCompleted: (updateId: number) => void;
     hasPending: () => boolean;
 }

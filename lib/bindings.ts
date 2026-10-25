@@ -464,6 +464,7 @@ export function createTelegramAssistantOutputBindingRuntime<
     typeof OutboundHandlers.createTelegramAssistantOutputSender<TTransportStamp>
   >[0];
   waitForActivityIdle?: () => Promise<void>;
+  isFinalOnlyEnabled?: () => boolean;
   prepareTelegramPreview?: () => Activity.TelegramAssistantOutputPreparation | undefined;
   enqueue?: Activity.TelegramActivityPublicationRuntime["enqueue"];
   recordRuntimeEvent: TelegramRuntimeEventRecorder;
@@ -477,6 +478,7 @@ export function createTelegramAssistantOutputBindingRuntime<
     );
   const runtime = Activity.createTelegramAssistantOutputRuntime({
     ...authority,
+    isFinalOnlyEnabled: deps.isFinalOnlyEnabled,
     enqueue: deps.enqueue,
     prepareSend: (event) => event.source === "telegram" ? deps.prepareTelegramPreview?.() : undefined,
     async send(event, authority, isAuthorityActive) {
@@ -1104,6 +1106,7 @@ export function registerTelegramLifecycleRuntimeHooks({
     OutboundHandlers.createTelegramOutboundReplyPlanner(
       buttonActionStore,
       getAssistantRenderingMode,
+      Config.createTelegramNormalTextOnlyChecker(configStore),
     );
   const voiceReplySenderDeps = {
     execCommand: CommandTemplates.execCommandTemplate,
@@ -1459,6 +1462,9 @@ export function registerTelegramLifecycleRuntimeHooks({
     },
     async onMessageStart(event, ctx) {
       if (!isSessionContextActive(ctx)) return;
+      // A final-turn steer can continue this run without agent_start. Release
+      // the superseded final slot before progress/preview work queues behind it.
+      if (event.message.role === "assistant") cancelPendingFinalPublication();
       midRunSteer?.onMessageStart(event);
       await messageActivityHooks.onMessageStart(event, ctx);
     },

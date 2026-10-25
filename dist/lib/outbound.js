@@ -8,6 +8,7 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { resolveTelegramTempDir } from "./paths.js";
 import * as Replies from "./replies.js";
+import { stripTelegramAssistantCodeBlocks } from "./rendering.js";
 import { isTelegramApiCommitUnknownError } from "./telegram-api.js";
 import { planTelegramButtonReply, } from "./outbound-buttons.js";
 import { planTelegramVoiceReply, stripTelegramCommentMarkupForDelivery, } from "./outbound-markup.js";
@@ -328,19 +329,27 @@ export async function transformTelegramOutboundTextReply(text, options) {
     return { text: transformedText, ...(replyMarkup ? { replyMarkup } : {}) };
 }
 export function createTelegramOutboundTextReplyRuntime(deps) {
+    const project = (text) => deps.isNormalTextOnlyEnabled?.()
+        ? stripTelegramAssistantCodeBlocks(text) : text;
     return {
         sendTextReply: async (chatId, replyToMessageId, text, options) => {
-            const transformed = await transformTelegramOutboundText(text, {
+            const projected = project(text);
+            if (deps.isNormalTextOnlyEnabled?.() && !projected.trim())
+                return undefined;
+            const transformed = await transformTelegramOutboundText(projected, {
                 handlers: deps.getHandlers?.(),
                 cwd: deps.cwd,
                 execCommand: deps.execCommand,
                 recordRuntimeEvent: deps.recordRuntimeEvent,
             });
-            return deps.sendTextReply(chatId, replyToMessageId, transformed, options);
+            const body = project(transformed);
+            if (deps.isNormalTextOnlyEnabled?.() && !body.trim())
+                return undefined;
+            return deps.sendTextReply(chatId, replyToMessageId, body, options);
         },
         sendMarkdownReply: async (chatId, replyToMessageId, markdown, options) => {
-            const deliveryMarkdown = stripTelegramCommentMarkupForDelivery(markdown);
-            if (!deliveryMarkdown)
+            const deliveryMarkdown = project(stripTelegramCommentMarkupForDelivery(markdown));
+            if (!deliveryMarkdown.trim())
                 return undefined;
             const transformed = await transformTelegramOutboundTextReply(deliveryMarkdown, {
                 handlers: deps.getHandlers?.(),
@@ -349,11 +358,12 @@ export function createTelegramOutboundTextReplyRuntime(deps) {
                 recordRuntimeEvent: deps.recordRuntimeEvent,
                 replyMarkup: options?.replyMarkup,
             });
-            return deps.sendMarkdownReply(chatId, replyToMessageId, transformed.text, {
+            const body = project(transformed.text);
+            if (!body.trim())
+                return undefined;
+            return deps.sendMarkdownReply(chatId, replyToMessageId, body, {
                 ...options,
-                ...(transformed.replyMarkup
-                    ? { replyMarkup: transformed.replyMarkup }
-                    : {}),
+                ...(transformed.replyMarkup ? { replyMarkup: transformed.replyMarkup } : {}),
             });
         },
     };
@@ -399,7 +409,7 @@ export function createTelegramVoiceReplySender(deps) {
     });
 }
 export { createTelegramButtonActionStore, createTelegramButtonPromptTurn, createTelegramButtonReplyPlanner, handleTelegramButtonCallbackQuery, markTelegramButtonSelected, planTelegramButtonReply, } from "./outbound-buttons.js";
-export function createTelegramOutboundReplyPlanner(store, getRenderingMode = () => "rich") {
+export function createTelegramOutboundReplyPlanner(store, getRenderingMode = () => "rich", isNormalTextOnlyEnabled = () => false) {
     return (markdown, options) => {
         const buttonReply = planTelegramButtonReply(markdown, {
             registerAction: store.register,
@@ -409,7 +419,9 @@ export function createTelegramOutboundReplyPlanner(store, getRenderingMode = () 
         // Button replies can also contain <!-- telegram_voice --> markup
         const voiceReply = planTelegramVoiceReply(buttonReply.markdown);
         return {
-            markdown: voiceReply.markdown,
+            markdown: isNormalTextOnlyEnabled()
+                ? stripTelegramAssistantCodeBlocks(voiceReply.markdown)
+                : voiceReply.markdown,
             ...(buttonReply.replyMarkup
                 ? { replyMarkup: buttonReply.replyMarkup }
                 : {}),
@@ -505,6 +517,7 @@ export function createTelegramAssistantOutputSender(deps) {
             sendMarkdownReply: replyRuntime.sendMarkdownReply,
             execCommand: deps.execCommand,
             getHandlers: deps.getHandlers,
+            isNormalTextOnlyEnabled: deps.isNormalTextOnlyEnabled,
             recordRuntimeEvent: deps.recordRuntimeEvent,
         });
         const buttonReply = deps.planButtonReply?.(event.text) ?? {

@@ -5,11 +5,11 @@
  */
 import { createHash, randomUUID } from "node:crypto";
 import { chmodSync, existsSync, readFileSync, renameSync, writeFileSync, } from "node:fs";
-import { chmod, mkdir, readFile, rename, unlink, writeFile, } from "node:fs/promises";
+import { chmod, mkdir, readFile, unlink, writeFile, } from "node:fs/promises";
 import { dirname, posix, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { isTelegramApiCommitUnknownError, TelegramApiCommitUnknownError, } from "./telegram-api.js";
-import { withTelegramFileTransaction } from "./locks.js";
+import { renameTelegramPathWithRetry, renameTelegramPathWithRetryAsync, withTelegramFileTransaction } from "./locks.js";
 import * as ThreadReconciler from "./thread-reconciler.js";
 import { planTelegramWorkspaceSlotAllocation, TELEGRAM_WORKSPACE_SLOTS, TelegramWorkspaceSlotUnavailableError, } from "./workspace-slots.js";
 import { resolveAgentDir, resolveTelegramProfileTempFilePath, } from "./paths.js";
@@ -1471,6 +1471,14 @@ export function createTelegramTopicTargetStore(options) {
                 mode: 0o600,
             });
             await chmod(tempPath, 0o600);
+            const requireSnapshotRename = (renamed) => {
+                // A vanished temporary file is not a durable commit.
+                if (!renamed) {
+                    throw Object.assign(new Error(`Telegram thread snapshot disappeared before commit: ${tempPath}`), {
+                        code: "ENOENT",
+                    });
+                }
+            };
             try {
                 if (transition) {
                     let applied = false;
@@ -1480,7 +1488,7 @@ export function createTelegramTopicTargetStore(options) {
                             return;
                         // Fence and rename share one synchronous commit boundary. No stale
                         // transition enters the live projection before durable commit.
-                        renameSync(tempPath, path);
+                        requireSnapshotRename(renameTelegramPathWithRetry(tempPath, path));
                         loadedPath = path;
                         records = new Map(Array.from(records).filter(([, record]) => !targetMatches(record.target, transition.target)));
                         syncObservations = file.syncObservations;
@@ -1501,7 +1509,7 @@ export function createTelegramTopicTargetStore(options) {
                 }
                 if (options.commitPersist) {
                     const committed = options.commitPersist(() => {
-                        renameSync(tempPath, path);
+                        requireSnapshotRename(renameTelegramPathWithRetry(tempPath, path));
                         chmodSync(path, 0o600);
                     });
                     if (!committed) {
@@ -1510,7 +1518,7 @@ export function createTelegramTopicTargetStore(options) {
                     }
                 }
                 else {
-                    await rename(tempPath, path);
+                    requireSnapshotRename(await renameTelegramPathWithRetryAsync(tempPath, path));
                     await chmod(path, 0o600);
                 }
             }

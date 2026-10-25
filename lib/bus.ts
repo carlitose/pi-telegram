@@ -225,6 +225,7 @@ export function createTelegramBusAuthSecret(): string {
 }
 
 export const TELEGRAM_BUS_PROTOCOL_VERSION = 2 as const;
+export const TELEGRAM_BUS_CAPABILITY_PI_COMMANDS = "pi-session-commands-v1" as const;
 export const TELEGRAM_BUS_CAPABILITY_DURABLE_FOLLOWER_ADMISSION =
   "durable-follower-admission-v1" as const;
 export const TELEGRAM_BUS_CAPABILITY_QUEUE_HANDOFF =
@@ -690,6 +691,7 @@ export type TelegramBusForeignUpdateFailureClass =
   | "source-update-identity-missing"
   | "recipient-binding-missing"
   | "recipient-generation-missing"
+  | "recipient-capability-missing"
   | "source-reference-missing"
   | "recipient-ownership-stale"
   | "transport-failed"
@@ -1415,6 +1417,18 @@ export function createTelegramBusForeignOwnedUpdateForwarder<
           sourceUpdateId,
         }),
       };
+    }
+    const text = isRecord(value)
+      ? (typeof value.text === "string" ? value.text : typeof value.caption === "string" ? value.caption : "")
+      : "";
+    if ((kind === "leader.forwardMessage" || kind === "leader.forwardEditedMessage") &&
+        /^\/pi(?:@\S+)?(?=\s|$)/i.test(text.trimStart()) &&
+        !ownership.protocolIdentity?.capabilities.includes(TELEGRAM_BUS_CAPABILITY_PI_COMMANDS)) {
+      return { settlement: reject({
+        status: "terminal-rejected", failureClass: "recipient-capability-missing",
+        message: "Target Pi bridge does not support /pi commands. Update and reload that session before retrying.",
+        envelopeKind: kind, ownership, sourceUpdateId,
+      }) };
     }
     const sourceReference = canUseTelegramBusInputCustodyReference({
       local: deps.localProtocolIdentity, remote: ownership.protocolIdentity });

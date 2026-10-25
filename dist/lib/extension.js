@@ -63,6 +63,7 @@ const telegramBusProtocolIdentity = Bus.createTelegramCurrentBusProtocolIdentity
     Bus.TELEGRAM_BUS_CAPABILITY_THREAD_DISPLAY_MODE,
     Bus.TELEGRAM_BUS_CAPABILITY_DIRECTORY_DISPLAY_FORMAT,
     Bus.TELEGRAM_BUS_CAPABILITY_SESSION_REPLACEMENT_INTENT,
+    Bus.TELEGRAM_BUS_CAPABILITY_PI_COMMANDS,
 ]);
 // --- Extension Runtime ---
 export default function (pi) {
@@ -621,6 +622,7 @@ export default function (pi) {
         sendMarkdownReply: replyRuntime.sendMarkdownReply,
         execCommand: CommandTemplates.execCommandTemplate,
         getHandlers: configStore.getOutboundHandlers,
+        isNormalTextOnlyEnabled: configControls.isNormalTextOnlyEnabled,
         recordRuntimeEvent,
     });
     const generativeAppLiveSurfaceBinding = Bindings.createTelegramGenerativeAppLiveSurfaceBinding();
@@ -655,6 +657,7 @@ export default function (pi) {
     const { activityRuntime, activityVerbosityRuntime, assistantOutputRuntime, localPromptEchoRuntime, publicationRuntime, } = Bindings.createTelegramActivityBindingRuntime({
         generation: deliveryGenerationSeed,
         assistantOutput: {
+            isFinalOnlyEnabled: configControls.isFinalOnlyEnabled,
             prepareTelegramPreview: previewRuntime.preparePublication,
             authority: {
                 getPreferredTarget: proactivePushTargetGetter,
@@ -672,6 +675,7 @@ export default function (pi) {
                 sendRichMessage,
                 editMessage: editTelegramMessageText,
                 getAssistantRenderingMode: configControls.getAssistantRenderingMode,
+                isNormalTextOnlyEnabled: configControls.isNormalTextOnlyEnabled,
                 planButtonReply: Outbound.createTelegramButtonReplyPlanner(buttonActionStore),
                 execCommand: CommandTemplates.execCommandTemplate,
                 getHandlers: configStore.getOutboundHandlers,
@@ -865,6 +869,17 @@ export default function (pi) {
     });
     const telegramThreadDisplayNameRenameBinding = Commands.createTelegramThreadDisplayNameRenameBinding();
     const telegramThreadDisplayNameResetBinding = Commands.createTelegramThreadDisplayNameResetBinding();
+    const piSessionCommands = Routing.createTelegramPiSessionCommandBinding({
+        action: sessionActionsRuntime,
+        context: telegramSessionContextStore,
+        transport: telegramTransportStampRuntime,
+        configStore,
+        getFollowerTarget: telegramBusFollowerRegistrationState.getTarget,
+        getLeaderTarget: telegramBusLeaderState.getTarget,
+        api: { getCommands, sendUserMessage },
+        sendTextReply,
+        recordRuntimeEvent,
+    });
     const inboundRouteRuntime = Routing.createTelegramInboundRouteRuntime({
         configStore,
         callApi: callTelegramApi,
@@ -888,32 +903,8 @@ export default function (pi) {
         foreignOwnedUpdateForwarder,
         replaceFollowerThreadTarget: restoreFollowerThreadTarget,
         bridgeRuntime,
-        requestNewSession(source) {
-            const updateId = Updates.getTelegramUpdateExecutionFence(source)?.updateId;
-            if (updateId === undefined) {
-                throw new Error("Telegram session replacement requires durable update authority.");
-            }
-            const callbackMessage = source && typeof source === "object" && "message" in source
-                ? source.message
-                : source;
-            const messageTarget = callbackMessage;
-            const target = typeof messageTarget?.chat?.id === "number" &&
-                typeof messageTarget.message_id === "number"
-                ? {
-                    chatId: messageTarget.chat.id,
-                    messageId: messageTarget.message_id,
-                    ...(typeof messageTarget.message_thread_id === "number"
-                        ? { threadId: messageTarget.message_thread_id }
-                        : {}),
-                }
-                : undefined;
-            if (!target) {
-                throw new Error("Telegram session replacement target is unavailable.");
-            }
-            if (!sessionActionsRuntime.scheduleAfterUpdate(updateId, target)) {
-                throw new Error("A Telegram session replacement is already pending.");
-            }
-        },
+        requestNewSession: piSessionCommands.requestNewSession,
+        requestPiCommand: piSessionCommands.requestPiCommand,
         activeTurnRuntime,
         mediaGroupRuntime,
         textGroupRuntime,

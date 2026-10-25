@@ -24,6 +24,7 @@ import {
   type UIPromptEndEvent,
   type UIPromptStartEvent,
   SettingsManager,
+  stripFrontmatter,
 } from "@earendil-works/pi-coding-agent";
 
 export type {
@@ -170,6 +171,7 @@ export interface PiSettingsManager {
 }
 
 export type PiSlashCommandInfo = SlashCommandInfo;
+export { stripFrontmatter };
 export type PiRunMode = "tui" | "rpc" | "json" | "print";
 
 function isPiRunMode(value: unknown): value is PiRunMode {

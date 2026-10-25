@@ -54,6 +54,7 @@ export declare function createTelegramBusProcessRuntime(input: {
 }): TelegramBusProcessRuntime;
 export declare function createTelegramBusAuthSecret(): string;
 export declare const TELEGRAM_BUS_PROTOCOL_VERSION: 2;
+export declare const TELEGRAM_BUS_CAPABILITY_PI_COMMANDS: "pi-session-commands-v1";
 export declare const TELEGRAM_BUS_CAPABILITY_DURABLE_FOLLOWER_ADMISSION: "durable-follower-admission-v1";
 export declare const TELEGRAM_BUS_CAPABILITY_QUEUE_HANDOFF: "queue-handoff-v1";
 export declare const TELEGRAM_BUS_CAPABILITY_INPUT_CUSTODY_REFERENCE: "input-custody-reference-v1";
@@ -169,7 +170,7 @@ export interface TelegramBusFollowerDeliveryIdentity {
         handoffId: string;
     };
 }
-export type TelegramBusForeignUpdateFailureClass = "source-update-identity-missing" | "recipient-binding-missing" | "recipient-generation-missing" | "source-reference-missing" | "recipient-ownership-stale" | "transport-failed" | "acknowledgement-missing" | "acknowledgement-rejected" | "acknowledgement-mismatched" | "durable-receipt-missing" | "durable-receipt-mismatched";
+export type TelegramBusForeignUpdateFailureClass = "source-update-identity-missing" | "recipient-binding-missing" | "recipient-generation-missing" | "recipient-capability-missing" | "source-reference-missing" | "recipient-ownership-stale" | "transport-failed" | "acknowledgement-missing" | "acknowledgement-rejected" | "acknowledgement-mismatched" | "durable-receipt-missing" | "durable-receipt-mismatched";
 export type TelegramBusForeignUpdateSettlement = {
     status: "accepted";
     delivery: TelegramBusFollowerDeliveryIdentity;

@@ -436,6 +436,69 @@ function canStartIndentedCodeBlock(lines: string[], index: number): boolean {
   return (lines[index - 1] ?? "").trim().length === 0;
 }
 
+/** Project completed assistant Markdown without changing its source/history. */
+export function stripTelegramAssistantCodeBlocks(markdown: string): string {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const logical = lines.map((line) => {
+    const depth = parseMarkdownQuoteLine(line)?.depth ?? 0;
+    let content = line;
+    for (let n = 0; n < depth; n++) content = content.replace(/^[ \t]*> ?/, "");
+    return { content, depth };
+  });
+  const contents = logical.map(({ content }) => content);
+  const kept: string[] = [];
+  let fence: { marker: "`" | "~"; length: number; depth: number } | undefined;
+  let diff = false;
+  let oldLines = 0;
+  let newLines = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const { content, depth } = logical[i]!;
+    if (fence && depth < fence.depth) fence = undefined;
+    if (fence) {
+      if (isMatchingMarkdownFence(content, fence)) fence = undefined;
+      continue;
+    }
+    const listFence = content.match(/^\s*(?:[-*+]|\d+\.)\s+([`~]{3,}.*)$/);
+    const opener = parseMarkdownFence(listFence?.[1] ?? content);
+    if (opener) {
+      fence = { ...opener, depth };
+      kept.push("");
+      continue;
+    }
+    const diffStart = /^diff --git /.test(content) ||
+      (/^--- (?:a\/|\/dev\/null)/.test(content) && /^\+\+\+ (?:b\/|\/dev\/null)/.test(contents[i + 1] ?? ""));
+    if (diffStart) { diff = true; kept.push(""); }
+    if (diff) {
+      const hunk = content.match(/^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/);
+      if (hunk) {
+        oldLines = Number(hunk[1] ?? 1);
+        newLines = Number(hunk[2] ?? 1);
+        continue;
+      }
+      if (oldLines > 0 || newLines > 0) {
+        const prefix = content[0];
+        if (prefix === "-" || prefix === "+" || prefix === " ") {
+          if (prefix !== "+") oldLines = Math.max(0, oldLines - 1);
+          if (prefix !== "-") newLines = Math.max(0, newLines - 1);
+          continue;
+        }
+      }
+      if (/^(?:diff --git |index |--- |\+\+\+ |\\ No newline|(?:new file|deleted file|old|new) mode |similarity index |rename (?:from|to) )/.test(content)) continue;
+      diff = false;
+      oldLines = newLines = 0;
+    }
+    if (canStartIndentedCodeBlock(contents, i)) {
+      const codeDepth = depth;
+      while (i + 1 < lines.length && logical[i + 1]!.depth >= codeDepth &&
+        (isIndentedCodeLine(contents[i + 1]!) || contents[i + 1]!.trim() === "")) i++;
+      kept.push("");
+      continue;
+    }
+    kept.push(lines[i]!);
+  }
+  return normalizeMarkdownDocument(kept.join("\n")).replace(/\n{3,}/g, "\n\n");
+}
+
 function stripIndentedCodePrefix(line: string): string {
   if (line.startsWith("\t")) return line.slice(1);
   if (line.startsWith("    ")) return line.slice(4);

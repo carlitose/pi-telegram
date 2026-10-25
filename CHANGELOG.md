@@ -4,7 +4,23 @@
 
 ## Unreleased
 
-No additional changes beyond 0.1.2 below.
+## 0.1.6: Normal assistant text
+
+- `Normal assistant text`: one Settings switch shows completed intermediate and final ordinary text while hiding thinking/tools, token drafts and code/diff blocks. Surrounding prose and native controls survive; text transforms cannot restore removed code. Stored preferences remain intact. Uses existing ordered delivery without inspecting Goal/Loop or waiting for automation completion.
+
+## 0.1.5: Windows slots and Pi session commands
+
+- `Pi session commands`: `/pi` discovers each session’s loaded extension commands, prompts, and Skills without a fixed package list. Extension handlers use the real Pi command gateway after durable source completion; resources keep the normal queue and attachments. `/pi --reload` requests a resource reload. Removed commands, stale contexts, and older follower targets fail closed; arbitrary TUI emulation remains out of scope.
+- `Windows slot protection`: journal and namespace inspection now uses supported Windows read flags instead of refusing every protection read for missing POSIX flags. Regular-file identity, link/type, schema, resource and mutation checks remain in force; incomplete evidence still blocks retirement. This does not clear history or grant topic-deletion authority.
+
+## 0.1.4: Final replies only
+
+- `Final-only replies`: Settings can now hide intermediate commentary, technical activity and streamed drafts with one switch, while final answers, errors and confirmation requests remain visible. Stored activity/draft preferences are restored when disabled. Hidden commentary is not mistaken for an already-published answer, preserving empty-final fallback and exact-target Rich/HTML delivery.
+
+## 0.1.3: Replies survive final-turn steering
+
+- `Steered reply delivery`: a message added while Pi was finishing a reply could make the same run continue, leaving later progress and the final answer waiting behind that reply's obsolete publication slot. Starting another assistant message now releases the slot before preview/progress work queues behind it, preserving final-answer order without resetting the connection or replaying input.
+- `Windows connection`: a temporarily occupied state snapshot could abort connect/resume with `EPERM`. Snapshot commits now use the existing bounded sharing retries while keeping ownership checks and permanent errors intact.
 
 ## 0.1.2: A reloaded session keeps its Thread
 

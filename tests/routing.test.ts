@@ -526,6 +526,7 @@ interface RouteHarnessOptions {
   ) => string | undefined;
   instanceId?: string;
   getCommands?: () => any[];
+  requestPiCommand?: Routing.TelegramInboundRouteRuntimeDeps<TestMessage, TestCallbackQuery, TestContext, TestModel>["requestPiCommand"];
   mediaGroupRuntime?: Media.TelegramMediaGroupController<
     TestMessage,
     TestContext
@@ -702,6 +703,7 @@ function createRouteHarness(options: RouteHarnessOptions = {}) {
     renameCurrentThread: options.renameCurrentThread,
     resetCurrentThreadName: options.resetCurrentThreadName,
     getCommands: options.getCommands ?? (() => []),
+    requestPiCommand: options.requestPiCommand,
     downloadFile:
       options.downloadFile ??
       (async (_fileId, fileName) => `/tmp/${fileName}`),
@@ -4805,5 +4807,136 @@ test("Routing runtime treats pruned failed topic history as unbound", async () =
     assert.equal(leaderRecord?.instanceId, "leader-a");
     assert.equal(telegramQueueStore.getQueuedItems().length, 1);
     assert.equal(events.includes("reply:Starting agent in topic C…"), false);
+  });
+});
+
+
+test("Pi session binding fences durable actions against generation, owner, transport and target changes", async () => {
+  for (const scenario of ["live", "generation", "owner", "transport", "target"]) {
+    const ctx = { cwd: "/repo" };
+    let generation = 1;
+    let owner: number | undefined = 7;
+    let transport = 1;
+    let assigned: Queue.TelegramQueueTarget | undefined;
+    const callbacks: Commands.TelegramSessionCommandAction[] = [];
+    const sent: unknown[] = [];
+    const binding = Routing.createTelegramPiSessionCommandBinding({
+      action: { scheduleAfterUpdate(id, target, run) { assert.equal(id, 92); assert.deepEqual(target, { chatId: 7, messageId: 11 }); assert.ok(run); callbacks.push(run); return true; } },
+      context: { getGeneration: () => generation, isCurrent: (value, epoch) => value === ctx && (epoch === undefined || epoch === generation) },
+      transport: { getStamp: () => transport, isActive: stamp => stamp === transport },
+      configStore: { getAllowedUserId: () => owner },
+      getFollowerTarget: () => undefined, getLeaderTarget: () => assigned,
+      api: { getCommands: () => [{ name: "goal", source: "extension", description: "Goal", sourceInfo: { path: "/sdk", source: "local", scope: "user", origin: "top-level" } }], sendUserMessage: text => { sent.push(text); } },
+      sendTextReply: async () => undefined,
+    });
+    const handle = Updates.createTelegramUpdateAdmissionHandle<TestUpdate & { update_id: number }, TestContext>({
+      registry: { version: 1, add: () => () => {}, dispatch: async () => "pass" },
+      defaultHandle: async update => { binding.requestPiCommand(update.message, ctx, { kind: "extension", name: "goal", args: "x", sourcePath: "/sdk" }); },
+    });
+    await handle({ update_id: 92, message: { message_id: 11, chat: { id: 7, type: "private" }, from: { id: 7, is_bot: false }, text: "/pi goal x" } }, ctx, new AbortController().signal);
+    assert.equal(sent.length, 0);
+    if (scenario === "generation") generation++;
+    if (scenario === "owner") owner = undefined;
+    if (scenario === "transport") transport++;
+    if (scenario === "target") assigned = { chatId: 7, threadId: 99 };
+    await callbacks[0]!({ reload: async () => {} } as unknown as Parameters<Commands.TelegramSessionCommandAction>[0]);
+    assert.equal(sent.length, scenario === "live" ? 1 : 0, scenario);
+  }
+});
+test("Pi resource routing preserves attachment, source identity, and durable admission receipt", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-resource-routing-"));
+  try {
+    const path = join(directory, "greet.md");
+    const attachment = join(directory, "notes.txt");
+    await writeFile(path, "---\ndescription: Greeting\n---\nHello $1");
+    await writeFile(attachment, "Attachment content");
+    const { routeRuntime, telegramQueueStore } = createRouteHarness({
+      getCommands: () => [{ name: "greet", source: "prompt", sourceInfo: { path } }],
+      downloadFile: async () => attachment,
+    });
+    const handle = Updates.createTelegramUpdateAdmissionHandle<TestUpdate & { update_id: number }, TestContext>({
+      registry: { version: 1, add: () => () => {}, dispatch: async () => "pass" },
+      defaultHandle: routeRuntime.handleUpdate,
+    });
+    const outcome = await handle({ update_id: 91, message: {
+      message_id: 11, chat: { id: 7, type: "private" }, from: { id: 7, is_bot: false },
+      caption: "/pi greet Alice", document: { file_id: "doc-91", file_name: "notes.txt" },
+    } }, { cwd: "/repo" }, new AbortController().signal);
+    assert.equal(outcome.kind, "queued");
+    if (outcome.kind === "queued") assert.deepEqual(outcome.sourceUpdateIds, [91]);
+    const queued = telegramQueueStore.getQueuedItems()[0];
+    assert.ok(queued && queued.kind === "prompt");
+    assert.match(queued.historyText, /Hello Alice/);
+    assert.deepEqual(queued.sourceMessageIds, [11]);
+    assert.match(JSON.stringify(queued.content), /notes\.txt/);
+    assert.match(queued.historyText, /notes\.txt/);
+    // queuedAttachments owns outbound reply artifacts, not inbound prompt files.
+    assert.equal(queued.queuedAttachments.length, 0);
+    assert.deepEqual(queued.admissionReceipts?.flatMap(receipt => receipt.sourceUpdateIds), [91]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+test("Pi routing projects fresh session catalogs and keeps exact request context", async () => {
+  for (const name of ["goal-a", "goal-b"]) {
+    let catalog = [{ name, source: "extension", sourceInfo: { path: `/private/${name}` } }];
+    const requests: unknown[][] = [];
+    const ctx = { cwd: `/repo/${name}` };
+    const { routeRuntime, events, telegramQueueStore } = createRouteHarness({
+      getCommands: () => catalog,
+      requestPiCommand: (...args) => { requests.push(args); },
+    });
+    const message = (text: string): TestMessage => ({
+      message_id: 11, chat: { id: 7, type: "private" }, from: { id: 7, is_bot: false }, text,
+    });
+    await routeRuntime.handleUpdate({ message: message("/pi") }, ctx);
+    assert.match(events.join("\n"), new RegExp(name));
+    assert.doesNotMatch(events.join("\n"), /\/private\//);
+    await routeRuntime.handleUpdate({ message: message(`/pi ${name} one  "two words"`) }, ctx);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0]![1], ctx);
+    assert.deepEqual(requests[0]![2], { kind: "extension", name, args: 'one  "two words"', sourcePath: `/private/${name}` });
+    catalog = [];
+    await routeRuntime.handleUpdate({ message: message(`/pi ${name}`) }, ctx);
+    assert.equal(requests.length, 1);
+    assert.equal(telegramQueueStore.getQueuedItems().length, 0);
+    assert.equal(events.some(event => event.startsWith("user:")), false);
+  }
+});
+
+test("Pi routing never discovers or invokes commands for an unpaired actor", async () => {
+  let discoveries = 0;
+  let requests = 0;
+  const { routeRuntime, telegramQueueStore } = createRouteHarness({
+    getCommands() { discoveries++; return []; },
+    requestPiCommand() { requests++; },
+  });
+  await routeRuntime.handleUpdate({ message: {
+    message_id: 12, chat: { id: 8, type: "private" }, from: { id: 8, is_bot: false }, text: "/pi --reload",
+  } }, { cwd: "/repo" });
+  assert.equal(discoveries, 0);
+  assert.equal(requests, 0);
+  assert.equal(telegramQueueStore.getQueuedItems().length, 0);
+});
+
+test("Pi routing in All chooses a thread before reading the leader catalog", async () => {
+  await withTopicStore(async threadStore => {
+    threadStore.upsert({ profileKey: "cwd:/repo", target: { chatId: 100, threadId: 42 }, status: "active", createdAtMs: 1000, updatedAtMs: 1000, instanceId: "leader-a", slot: "A", threadName: "Axial" });
+    await threadStore.persist();
+    let discoveries = 0;
+    let requests = 0;
+    const { routeRuntime, events, telegramQueueStore } = createRouteHarness({
+      threadStore,
+      getCommands() { discoveries++; return []; },
+      requestPiCommand() { requests++; },
+    });
+    await routeRuntime.handleUpdate({ message: {
+      message_id: 13, chat: { id: 100, type: "private" }, from: { id: 7, is_bot: false }, text: "/pi goal",
+    } }, { cwd: "/repo" });
+    assert.equal(discoveries, 0);
+    assert.equal(requests, 0);
+    assert.equal(telegramQueueStore.getQueuedItems().length, 0);
+    assert.match(events.join("\n"), /You used <code>\/pi<\/code>/);
+    assert.match(events.join("\n"), /reroute:1:42/);
   });
 });

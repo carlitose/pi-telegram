@@ -11,6 +11,7 @@ import * as Media from "./media.ts";
 import * as Menu from "./menu.ts";
 import * as Model from "./model.ts";
 import * as OutboundHandlers from "./outbound.ts";
+import * as PiCommands from "./pi-commands.ts";
 import * as PromptTemplates from "./prompt-templates.ts";
 import * as Queue from "./queue.ts";
 import type { TelegramBridgeRuntime } from "./runtime.ts";
@@ -168,6 +169,7 @@ export interface TelegramInboundRouteRuntimeDeps<TMessage extends TelegramRouted
     isIdle: (ctx: TContext) => boolean;
     hasPendingMessages: (ctx: TContext) => boolean;
     requestNewSession?: (source: unknown) => void;
+    requestPiCommand?: (source: unknown, ctx: TContext, request: PiCommands.TelegramPiCommandRequest) => void;
     compact: (ctx: TContext, callbacks: {
         onComplete: () => void;
         onError: (error: unknown) => void;
@@ -208,4 +210,28 @@ export declare function createTelegramAssistantOutputAuthorityRuntime<TTransport
     isFollowerRegistered: () => boolean;
     getFollowerGeneration: () => string | undefined;
 }): TelegramAssistantOutputAuthorityRuntime<TTransportStamp>;
+/** Binds durable source completion to the current session's native command effects. */
+export declare function createTelegramPiSessionCommandBinding<TContext, TStamp>(deps: {
+    action: Pick<Commands.TelegramSessionActionRuntime, "scheduleAfterUpdate">;
+    context: {
+        getGeneration(): number;
+        isCurrent(ctx: TContext, generation?: number): boolean;
+    };
+    transport: {
+        getStamp(): TStamp;
+        isActive(stamp: TStamp): boolean;
+    };
+    configStore: Pick<TelegramConfigStore, "getAllowedUserId">;
+    getFollowerTarget: () => Queue.TelegramQueueTarget | undefined;
+    getLeaderTarget: () => Queue.TelegramQueueTarget | undefined;
+    api: Pick<PiCommands.TelegramPiCommandExecutionDeps, "getCommands" | "sendUserMessage">;
+    sendTextReply: (chatId: number, messageId: number, html: string, options: {
+        parseMode: "HTML";
+        target: Queue.TelegramQueueTarget;
+    }) => Promise<unknown>;
+    recordRuntimeEvent?: (category: string, error: unknown) => void;
+}): {
+    requestNewSession(source: unknown): void;
+    requestPiCommand(source: unknown, ctx: TContext, request: PiCommands.TelegramPiCommandRequest): void;
+};
 export {};

@@ -31,6 +31,7 @@ Use emoji as stable semantic markers, not decoration. Emoji carry transportable 
 | `⌛` | Empty / standing idle | Inline main-menu Queue row, empty-queue notices | Standing hourglass means no future work is waiting above the neck. |
 | `⚙️` | Settings / configuration | Settings menu headings and Settings navigation rows | Extension-injected rows appear before the built-in `⚙️ Settings` row. |
 | `🧩` | Extension-provided surface | Extension command examples, extension section examples | Companion extensions may choose their own emoji, but `🧩` means generic extension/plugin. |
+| `⌨️` | Pi session commands | `/pi` command description, catalog, and request acknowledgements | Invokes loaded host commands; does not imply a remote terminal or generic TUI navigation. |
 | `👄` | Voice reply policy | Voice reply settings row and detail card | Not a generic audio attachment marker. |
 | `🕒` | Time injection / wall-clock context | Time injection settings row and detail card | Clock-face marker with hands; not a generic duration/progress marker. |
 | `🔬` | Activity / technical detail | Activity settings row and detail card | Chooses quiet, thinking, tools, or verbose bridge activity; not a generic diagnostics marker. |

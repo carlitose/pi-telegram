@@ -4,7 +4,7 @@
  * Owns direct pi SDK imports and exposes narrow bridge-facing helpers/types for the extension composition layer
  */
 import type { AssistantMessageEvent } from "@earendil-works/pi-ai";
-import { type AgentEndEvent, type AgentSettledEvent, type AgentStartEvent, type BeforeAgentStartEvent, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type InputEvent, type MessageEndEvent, type SessionBeforeCompactEvent, type SessionCompactEvent, type SessionShutdownEvent, type SessionStartEvent, type SlashCommandInfo, type TurnEndEvent, type UIPromptEndEvent, type UIPromptStartEvent } from "@earendil-works/pi-coding-agent";
+import { type AgentEndEvent, type AgentSettledEvent, type AgentStartEvent, type BeforeAgentStartEvent, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type InputEvent, type MessageEndEvent, type SessionBeforeCompactEvent, type SessionCompactEvent, type SessionShutdownEvent, type SessionStartEvent, type SlashCommandInfo, type TurnEndEvent, type UIPromptEndEvent, type UIPromptStartEvent, stripFrontmatter } from "@earendil-works/pi-coding-agent";
 export type { AgentEndEvent, AgentSettledEvent, AgentStartEvent, AssistantMessageEvent, BeforeAgentStartEvent, ExtensionAPI, ExtensionCommandContext, ExtensionContext, InputEvent, MessageEndEvent, SessionBeforeCompactEvent, SessionCompactEvent, SessionShutdownEvent, SessionStartEvent, SlashCommandInfo, TurnEndEvent, UIPromptEndEvent, UIPromptStartEvent, };
 export type PiRemoteDialogRequest = {
     type: "ui_prompt_request";
@@ -96,6 +96,7 @@ export interface PiSettingsManager {
     setEnabledModels: (patterns: string[] | undefined) => void;
 }
 export type PiSlashCommandInfo = SlashCommandInfo;
+export { stripFrontmatter };
 export type PiRunMode = "tui" | "rpc" | "json" | "print";
 export declare function getExtensionContextMode(ctx: unknown): PiRunMode | undefined;
 export declare function isExtensionContextPassiveRunMode(ctx: unknown): boolean;

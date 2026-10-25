@@ -71,6 +71,7 @@ export declare function registerTelegramOutboundHandler(kind: string, handler: T
 export declare function getTelegramOutboundProgrammaticHandlers(kind: string): TelegramOutboundProgrammaticHandler[];
 export interface TelegramOutboundTextReplyRuntimeDeps<TReplyMarkup = unknown> {
     execCommand: TelegramVoiceReplySenderDeps["execCommand"];
+    isNormalTextOnlyEnabled?: () => boolean;
     getHandlers?: () => TelegramOutboundHandlerConfig[] | undefined;
     sendTextReply: (chatId: number, replyToMessageId: number | undefined, text: string, options?: {
         parseMode?: "HTML";
@@ -145,7 +146,7 @@ export declare function createTelegramVoiceReplySender(deps: TelegramVoiceReplyS
     replyMarkup?: unknown;
 } | undefined) => Promise<void>;
 export { createTelegramButtonActionStore, createTelegramButtonPromptTurn, createTelegramButtonReplyPlanner, handleTelegramButtonCallbackQuery, markTelegramButtonSelected, planTelegramButtonReply, type TelegramButtonActionStore, type TelegramButtonCallbackHandlerDeps, type TelegramButtonCallbackQuery, type TelegramButtonReplyPlan, type TelegramOutboundButtonAction, type TelegramOutboundButtonBinding, type TelegramOutboundButtonMarkup, type TelegramOutboundButtonStoredAction, } from "./outbound-buttons.ts";
-export declare function createTelegramOutboundReplyPlanner(store: Pick<TelegramButtonActionStore, "register">, getRenderingMode?: () => "rich" | "html"): (markdown: string, options?: {
+export declare function createTelegramOutboundReplyPlanner(store: Pick<TelegramButtonActionStore, "register">, getRenderingMode?: () => "rich" | "html", isNormalTextOnlyEnabled?: () => boolean): (markdown: string, options?: {
     binding?: TelegramOutboundButtonBinding;
 }) => TelegramOutboundReplyPlan<TelegramOutboundButtonMarkup>;
 /**
@@ -180,6 +181,7 @@ export declare function createTelegramAssistantOutputSender<TTransportStamp, TRe
         replyMarkup?: TReplyMarkup;
     };
     execCommand: TelegramOutboundTextReplyRuntimeDeps<TReplyMarkup>["execCommand"];
+    isNormalTextOnlyEnabled?: () => boolean;
     getHandlers?: TelegramOutboundTextReplyRuntimeDeps<TReplyMarkup>["getHandlers"];
     recordRuntimeEvent?: TelegramOutboundTextReplyRuntimeDeps<TReplyMarkup>["recordRuntimeEvent"];
 }): (event: TelegramAssistantSegmentEvent, authority: TelegramAssistantOutputDeliveryAuthority<TTransportStamp>, isAuthorityActive: () => boolean) => Promise<void>;

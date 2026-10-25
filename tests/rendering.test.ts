@@ -13,6 +13,7 @@ import {
   MAX_MESSAGE_LENGTH,
   renderTelegramInlineMarkdownHtml,
   renderTelegramMessage,
+  stripTelegramAssistantCodeBlocks,
 } from "../lib/rendering.ts";
 
 function countMatches(text: string, pattern: RegExp): number {
@@ -688,3 +689,22 @@ test("Chunked list, code, quote, and prose cycles stay balanced across transitio
     );
   }
 });
+
+for (const [label, markdown, expected] of [
+  ["fenced code", "Before\n```ts\nconst secret = 1;\n```\nAfter", "Before\n\nAfter"],
+  ["tilde diff", "Before\n~~~diff\n-old\n+new\n~~~\nAfter", "Before\n\nAfter"],
+  ["long fence", "Before\n````md\n```js\nhidden\n```\n````\nAfter", "Before\n\nAfter"],
+  ["unterminated fence", "Before\n```ts\nhidden", "Before"],
+  ["indented code", "Before\n\n    hidden();\n    more();\n\nAfter", "Before\n\nAfter"],
+  ["quoted fence", "> Before\n> ```ts\n> hidden();\n> ```\n> After", "> Before\n\n> After"],
+  ["unterminated quoted fence", "> ```js\n> hidden();\nOutside prose", "Outside prose"],
+  ["list fence", "Before\n- ```js\n  hidden();\n  ```\nAfter", "Before\n\nAfter"],
+  ["raw diff", "Before\n\ndiff --git a/a b/a\nindex 123..456 100644\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-old\n+new\n\nAfter", "Before\n\nAfter"],
+  ["list after diff", "Before\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-old\n+new\n\n- Keep this prose", "Before\n\n- Keep this prose"],
+  ["only code", "```js\nhidden();\n```", ""],
+  ["prose and structure", "# Done\nUse `/pi` and `file.ts`.\n- One\n  - Two\n\n| A | B |\n| --- | --- |\n| x | y |", "# Done\nUse `/pi` and `file.ts`.\n- One\n  - Two\n\n| A | B |\n| --- | --- |\n| x | y |"],
+] as const) {
+  test(`Normal-text projection preserves prose around ${label}`, () => {
+    assert.equal(stripTelegramAssistantCodeBlocks(markdown), expected);
+  });
+}

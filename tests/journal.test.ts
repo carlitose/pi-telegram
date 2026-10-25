@@ -214,12 +214,15 @@ test("Follower journal discovery is profile-exact, segment-aware, and fail-close
   }
 });
 
+const supportsJournalInspection = process.platform === "win32" ||
+  Boolean(fs.constants.O_NOFOLLOW && fs.constants.O_NONBLOCK);
+
 function assertUnsupportedStrictInspection(
   input: Parameters<typeof inspectTelegramUpdateJournalFamily>[0],
   context: TestContext,
   inspect: () => unknown = () => inspectTelegramUpdateJournalFamily(input),
 ): boolean {
-  if (fs.constants.O_NOFOLLOW && fs.constants.O_NONBLOCK) return false;
+  if (supportsJournalInspection) return false;
   assert.throws(inspect, (error) =>
     isJournalError(error, "invalid") && /platform lacks no-follow nonblocking open evidence/.test((error as Error).message));
   context.diagnostic("Open flags unavailable: fail-closed refusal verified; successful decoding not exercised.");
@@ -1941,7 +1944,7 @@ test("Input custody reserves one ready release and complete transition chain bef
     store.appendBatch([{ update_id: 2 }], 2);
     const originalUnlink = fs.unlinkSync;
     fs.unlinkSync = ((target: fs.PathLike) => {
-      if (String(target).startsWith(`${path}.segments/`)) throw new Error("synthetic retained segment");
+      if (dirname(String(target)) === `${path}.segments`) throw new Error("synthetic retained segment");
       return originalUnlink(target);
     }) as typeof fs.unlinkSync;
     syncBuiltinESMExports();
@@ -2371,7 +2374,7 @@ test("Input custody offer reserves dead-donor recovery through complete cleanup 
       getQueueProcessLiveness: () => "dead" });
     const originalUnlink = fs.unlinkSync;
     fs.unlinkSync = ((target: fs.PathLike) => {
-      if (String(target).startsWith(`${path}.segments/`)) throw new Error("synthetic retained handoff segment");
+      if (dirname(String(target)) === `${path}.segments`) throw new Error("synthetic retained handoff segment");
       return originalUnlink(target);
     }) as typeof fs.unlinkSync;
     syncBuiltinESMExports();
@@ -2472,7 +2475,7 @@ test("Input custody grouped queue transition reserves commit-unknown completion 
     assert.equal(duplicate.queued, false);
     const originalUnlink = fs.unlinkSync;
     fs.unlinkSync = ((target: fs.PathLike) => {
-      if (String(target).startsWith(`${path}.segments/`)) throw new Error("synthetic retained queue segment");
+      if (dirname(String(target)) === `${path}.segments`) throw new Error("synthetic retained queue segment");
       return originalUnlink(target);
     }) as typeof fs.unlinkSync;
     syncBuiltinESMExports();
@@ -2780,7 +2783,7 @@ test("Strict family inspection preserves evidence and rejects uncertain families
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
-test("Live source reader refuses unavailable open capabilities (synthetic, not native Windows evidence)", () => {
+test("Live source reader refuses unavailable non-Windows open capabilities (synthetic)", () => {
   const syntheticDirectory = resolve(tmpdir(), "pi-telegram-synthetic-journal");
   const syntheticPath = join(syntheticDirectory, "journal.json");
   for (const flag of ["O_NOFOLLOW", "O_NONBLOCK"]) {
@@ -2790,7 +2793,8 @@ test("Live source reader refuses unavailable open capabilities (synthetic, not n
       registerHooks({ load(url, context, next) {
         const loaded = next(url, context);
         if (url === ${JSON.stringify(new URL("../lib/journal.ts", import.meta.url).href)}) {
-          return { ...loaded, source: String(loaded.source).replace('  constants,', '  constants as nativeConstants,') +
+          return { ...loaded, source: String(loaded.source).replace('  constants,', '  constants as nativeConstants,')
+            .replace('process.platform !== "win32"', 'true') +
             '\\nconst constants = { ...nativeConstants, ${flag}: 0 };\\n' };
         }
         return loaded;
@@ -3287,7 +3291,7 @@ function createStore(
 }
 
 const sourceLimits = { maxFiles: 1024, maxBytes: 64 * 1024 * 1024, maxEntries: 10_000, maxWork: 10_000_000 };
-const sourceTestOptions = { skip: !fs.constants.O_NOFOLLOW || !fs.constants.O_NONBLOCK };
+const sourceTestOptions = { skip: !supportsJournalInspection };
 
 for (const liveSource of [false, true]) test(`Source serialization gates every store operation once while retaining receipt authority (live=${liveSource})`, { skip: liveSource && sourceTestOptions.skip }, async () => {
   await withJournalTempDir(async ({ dir, path }) => {
@@ -3561,7 +3565,7 @@ for (const version of [1, 2] as const) for (const interruption of ["none", "snap
       const originalUnlink = fs.unlinkSync;
       if (interruption === "cleanup") {
         fs.unlinkSync = ((target: fs.PathLike) => {
-          if (String(target).startsWith(`${path}.segments/`)) throw new Error("Synthetic cleanup refusal");
+          if (dirname(String(target)) === `${path}.segments`) throw new Error("Synthetic cleanup refusal");
           return originalUnlink(target);
         }) as typeof fs.unlinkSync;
         syncBuiltinESMExports();
@@ -3833,8 +3837,10 @@ for (const liveSource of [false, true]) test(`Real config contention excludes ev
       console.log(JSON.stringify({ contentions, methods }));
     `;
     config.withSourceSerialization(() => {
+      // This child exercises every method against a real contended filesystem lock;
+      // Windows can spend over 10 seconds on those retries even with sleeps disabled.
       const child = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", script],
-        { encoding: "utf8", timeout: 10_000 });
+        { encoding: "utf8", timeout: 60_000 });
       assert.equal(child.error, undefined);
       assert.equal(child.status, 0, child.stderr);
       const result = JSON.parse(child.stdout);
@@ -4146,7 +4152,7 @@ test("Workspace protection reads journal evidence without recovery, repair, or p
   try {
     const binding = resolveBinding()!;
     const read = binding.readForProtection!;
-    if (!fs.constants.O_NOFOLLOW || !fs.constants.O_NONBLOCK) {
+    if (process.platform !== "win32" && (!fs.constants.O_NOFOLLOW || !fs.constants.O_NONBLOCK)) {
       assert.throws(read);
       assert.equal(existsSync(path), false);
       return;
