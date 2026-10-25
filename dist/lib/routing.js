@@ -10,6 +10,7 @@ import * as Commands from "./commands.js";
 import * as Media from "./media.js";
 import * as Menu from "./menu.js";
 import * as OutboundHandlers from "./outbound.js";
+import * as PiCommands from "./pi-commands.js";
 import * as PromptTemplates from "./prompt-templates.js";
 import * as Queue from "./queue.js";
 import * as Replies from "./replies.js";
@@ -1749,6 +1750,43 @@ export function createTelegramInboundRouteRuntime(deps) {
             return true;
         },
         handleCommand: commandHandler,
+        executePiCommand: async (_command, messages, ctx, rawText) => {
+            const message = messages[0];
+            const owner = deps.configStore.getAllowedUserId();
+            if (owner === undefined || message.from?.id !== owner || message.chat.type !== "private")
+                return true;
+            const target = Updates.getTelegramMessageTarget(message);
+            const reply = async (html) => {
+                Updates.assertTelegramUpdateExecutionCurrent(message);
+                await deps.sendTextReply(message.chat.id, message.message_id, html, { parseMode: "HTML", target });
+                Updates.assertTelegramUpdateExecutionCurrent(message);
+            };
+            try {
+                const args = rawText.trimStart().replace(/^\/pi(?:@\S+)?(?:\s+|$)/i, "");
+                const plan = PiCommands.planTelegramPiCommand(args, deps.getCommands());
+                if (plan.kind === "reply") {
+                    await reply(plan.html);
+                }
+                else if (plan.kind === "prompt") {
+                    const commandIndex = messages.findIndex(item => Media.extractFirstTelegramMessageText([item]).length > 0);
+                    await promptEnqueue(messages.map((item, index) => index === commandIndex
+                        ? Updates.carryTelegramUpdateExecutionFence(item, { ...item, text: plan.text, caption: undefined })
+                        : item), ctx);
+                }
+                else if (deps.requestPiCommand) {
+                    Updates.assertTelegramUpdateExecutionCurrent(message);
+                    deps.requestPiCommand(message, ctx, plan.request);
+                }
+                else {
+                    await reply("<b>⚠️ Pi command execution is unavailable in this runtime.</b>");
+                }
+            }
+            catch (error) {
+                deps.recordRuntimeEvent?.("pi-command", error);
+                await reply("<b>⚠️ Pi command request failed.</b>");
+            }
+            return true;
+        },
         executeExtensionCommand: async (command, message, ctx) => {
             const extensionCommand = Commands.findTelegramExtensionCommand(command.name);
             if (!extensionCommand)
@@ -2357,6 +2395,55 @@ export function createTelegramAssistantOutputAuthorityRuntime(deps) {
         },
         canDeliver() {
             return deps.ownsDirect() || deps.isFollowerRegistered();
+        },
+    };
+}
+/** Binds durable source completion to the current session's native command effects. */
+export function createTelegramPiSessionCommandBinding(deps) {
+    const schedule = (source, run) => {
+        const updateId = Updates.getTelegramUpdateExecutionFence(source)?.updateId;
+        if (updateId === undefined)
+            throw new Error("Telegram session action requires durable update authority.");
+        const callbackMessage = source && typeof source === "object" && "message" in source
+            ? source.message : source;
+        const message = callbackMessage;
+        if (typeof message?.chat?.id !== "number" || typeof message.message_id !== "number") {
+            throw new Error("Telegram session action target is unavailable.");
+        }
+        const target = {
+            chatId: message.chat.id, messageId: message.message_id,
+            ...(typeof message.message_thread_id === "number" ? { threadId: message.message_thread_id } : {}),
+        };
+        if (!deps.action.scheduleAfterUpdate(updateId, target, run ? ctx => run(ctx, target) : undefined)) {
+            throw new Error("A Telegram session action is already pending.");
+        }
+    };
+    return {
+        requestNewSession(source) { schedule(source); },
+        requestPiCommand(source, ctx, request) {
+            const generation = deps.context.getGeneration();
+            const stamp = deps.transport.getStamp();
+            const owner = deps.configStore.getAllowedUserId();
+            schedule(source, async (commandCtx, target) => {
+                const isCurrent = () => {
+                    const assigned = deps.getFollowerTarget() ?? deps.getLeaderTarget();
+                    return owner !== undefined && owner === deps.configStore.getAllowedUserId() &&
+                        deps.context.isCurrent(ctx, generation) && deps.transport.isActive(stamp) &&
+                        (assigned ? assigned.chatId === target.chatId && assigned.threadId === target.threadId
+                            : target.threadId === undefined && target.chatId === owner);
+                };
+                const reply = async (html) => {
+                    if (isCurrent())
+                        await deps.sendTextReply(target.chatId, target.messageId, html, { parseMode: "HTML", target });
+                };
+                try {
+                    await PiCommands.executeTelegramPiCommand(request, { ctx: commandCtx, ...deps.api, isCurrent, reply });
+                }
+                catch (error) {
+                    deps.recordRuntimeEvent?.("pi-command", error);
+                    await reply("<b>⚠️ Pi command request failed.</b>");
+                }
+            });
         },
     };
 }

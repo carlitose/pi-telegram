@@ -190,6 +190,7 @@ test("Command helpers expose Telegram bot command definitions", () => {
       command: "stop",
       description: "🟥 Abort Pi & Clear queue",
     },
+    { command: "pi", description: "⌨️ Commands in this Pi session" },
   ];
   assert.deepEqual(TELEGRAM_BOT_COMMANDS, expectedBuiltins);
   assert.equal(

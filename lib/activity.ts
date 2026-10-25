@@ -817,6 +817,7 @@ export interface TelegramAssistantOutputPreparation {
 }
 
 export function createTelegramAssistantOutputRuntime<TAuthority = undefined>(deps: {
+  isFinalOnlyEnabled?: () => boolean;
   prepareSend?: (event: TelegramAssistantSegmentEvent) => TelegramAssistantOutputPreparation | undefined;
   enqueue?: TelegramActivityPublicationRuntime["enqueue"];
   captureAuthority?: () => TAuthority;
@@ -836,12 +837,14 @@ export function createTelegramAssistantOutputRuntime<TAuthority = undefined>(dep
   let running = false;
   let tail: Promise<void> = Promise.resolve();
   const admitted = new Set<string>();
-  const admittedTelegramIntermediateText = new Set<string>();
+  const admittedTelegramIntermediateText = new Map<string, { delivered: boolean }>();
   const isEligibleEvent = (event: TelegramAssistantSegmentEvent): boolean =>
-    (event.source === "telegram" && event.placement === "intermediate") ||
-    event.source === "local" ||
-    event.source === "autonomous" ||
-    event.source === "unknown";
+    !(deps.isFinalOnlyEnabled?.() && event.placement === "intermediate") && (
+      (event.source === "telegram" && event.placement === "intermediate") ||
+      event.source === "local" ||
+      event.source === "autonomous" ||
+      event.source === "unknown"
+    );
 
   return {
     start() {
@@ -859,9 +862,10 @@ export function createTelegramAssistantOutputRuntime<TAuthority = undefined>(dep
       const key = `${event.activityId}:${event.sequence}`;
       if (admitted.has(key)) return;
       admitted.add(key);
-      if (event.source === "telegram" && event.placement === "intermediate") {
-        admittedTelegramIntermediateText.add(event.text.trim());
-      }
+      const intermediate = event.source === "telegram" && event.placement === "intermediate"
+        ? admittedTelegramIntermediateText.get(event.text.trim()) ?? { delivered: false }
+        : undefined;
+      if (intermediate) admittedTelegramIntermediateText.set(event.text.trim(), intermediate);
       const admittedGeneration = generation;
       const admittedAuthority = deps.captureAuthority?.();
       const preparation = deps.prepareSend?.(event);
@@ -882,13 +886,17 @@ export function createTelegramAssistantOutputRuntime<TAuthority = undefined>(dep
             admittedAuthority as TAuthority,
             isAdmittedAuthorityActive,
           );
+          if (intermediate && isAdmittedAuthorityActive()) intermediate.delivered = true;
         } catch (error) {
           deps.recordFailure?.(event, error);
         }
       }).finally(() => preparation?.settle());
     },
     hasAdmittedTelegramIntermediate(text) {
-      return admittedTelegramIntermediateText.has(text.trim());
+      const intermediate = admittedTelegramIntermediateText.get(text.trim());
+      // A queued segment hidden by a later setting change must remain available
+      // to the empty-final fallback; genuinely delivered text stays deduplicated.
+      return !!intermediate && (intermediate.delivered || !deps.isFinalOnlyEnabled?.());
     },
     waitForIdle() {
       return tail;

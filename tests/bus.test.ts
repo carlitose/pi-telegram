@@ -2979,3 +2979,29 @@ test("Bus follower registry returns defensive copies", () => {
     threadId: 2,
   });
 });
+
+
+test("Pi bus commands require the recipient capability before any IPC or prompt forwarding", async () => {
+  const Bus = await import("../lib/bus.ts");
+  let connections = 0;
+  const forwarder = Bus.createTelegramBusForeignOwnedUpdateForwarder({
+    socketPath: () => { connections++; return "/not-a-socket"; },
+    createRequestId: () => "pi-request",
+  });
+  for (const capabilities of [[], ["pi-session-commands-v1"]]) {
+    const input = {
+      message: { text: "/pi@fixture goal private-args", pi_telegram_source_update_id: 71 },
+      ownership: { instanceId: "follower-a", recipientBindingKey: "manual:follower-a", protocolIdentity: Bus.createTelegramBusProtocolIdentity({ runtimeBuild: "test", capabilities }) },
+      ctx: {},
+    };
+    for (const forward of [forwarder.forwardMessage, forwarder.forwardEditedMessage]) {
+      const outcome = await forward(input);
+      assert.notEqual(outcome.status, "accepted");
+      if (outcome.status === "accepted") throw new Error("Unexpected forwarding");
+      assert.equal(outcome.failureClass, capabilities.length ? "recipient-generation-missing" : "recipient-capability-missing");
+      assert.equal(outcome.status, capabilities.length ? "retryable" : "terminal-rejected");
+      assert.doesNotMatch(outcome.message, /private-args/);
+    }
+  }
+  assert.equal(connections, 0);
+});

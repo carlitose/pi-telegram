@@ -628,9 +628,48 @@ export function createTelegramConfigStore(options = {}) {
         },
     };
 }
+export function createTelegramNormalTextOnlyChecker(configStore) {
+    return () => configStore.get().assistant?.normalTextOnly === true;
+}
+export function createTelegramNormalTextOnlySetter(configStore) {
+    return async (enabled) => {
+        await loadLatestTelegramConfig(configStore);
+        const current = configStore.get();
+        const config = {
+            ...current,
+            assistant: { ...current.assistant, normalTextOnly: enabled },
+        };
+        configStore.set(config);
+        await configStore.persist(config);
+    };
+}
+export function createTelegramFinalOnlyChecker(configStore) {
+    return () => {
+        const assistant = configStore.get().assistant;
+        return assistant?.normalTextOnly !== true && assistant?.finalOnly === true;
+    };
+}
+export function createTelegramFinalOnlySetter(configStore) {
+    return async (enabled) => {
+        await loadLatestTelegramConfig(configStore);
+        const current = configStore.get();
+        const config = {
+            ...current,
+            assistant: {
+                ...current.assistant,
+                finalOnly: enabled,
+                ...(enabled && current.assistant?.normalTextOnly === true ? { normalTextOnly: false } : {}),
+            },
+        };
+        configStore.set(config);
+        await configStore.persist(config);
+    };
+}
 export function createTelegramDraftPreviewsChecker(configStore) {
     return () => {
         const config = configStore.get();
+        if (config.assistant?.normalTextOnly === true || config.assistant?.finalOnly === true)
+            return false;
         return (config.assistant?.draftPreviews ??
             config.draftPreviews ??
             config.richDraftPreviews ??
@@ -671,6 +710,8 @@ export function createTelegramAssistantRenderingModeSetter(configStore) {
 export function createTelegramActivityVerbosityGetter(configStore) {
     return () => {
         const assistant = configStore.get().assistant;
+        if (assistant?.normalTextOnly === true || assistant?.finalOnly === true)
+            return "quiet";
         if (assistant?.activity !== undefined) {
             if (assistant.activity === "thinking" ||
                 assistant.activity === "tools" ||
@@ -827,6 +868,10 @@ export function createTelegramAutomaticThreadCleanupSetter(configStore) {
 }
 export function createTelegramConfigControls(configStore) {
     return {
+        isNormalTextOnlyEnabled: createTelegramNormalTextOnlyChecker(configStore),
+        setNormalTextOnlyEnabled: createTelegramNormalTextOnlySetter(configStore),
+        isFinalOnlyEnabled: createTelegramFinalOnlyChecker(configStore),
+        setFinalOnlyEnabled: createTelegramFinalOnlySetter(configStore),
         areDraftPreviewsEnabled: createTelegramDraftPreviewsChecker(configStore),
         setDraftPreviewsEnabled: createTelegramDraftPreviewsSetter(configStore),
         getAssistantRenderingMode: createTelegramAssistantRenderingModeGetter(configStore),

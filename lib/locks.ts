@@ -18,6 +18,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { rename } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { basename, dirname, join } from "node:path";
 import { resolveTelegramOwnersPath } from "./paths.ts";
 
@@ -213,6 +215,23 @@ export function renameTelegramPathWithRetry(
   return false;
 }
 
+/** Unfenced writes must yield so pending filesystem readers can close. */
+export async function renameTelegramPathWithRetryAsync(
+  sourcePath: string,
+  destinationPath: string,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < TELEGRAM_LOCK_WRITE_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      await rename(sourcePath, destinationPath);
+      return true;
+    } catch (error) {
+      if ((error as { code?: unknown })?.code === "ENOENT") return false;
+      if (!isRetryableLockWriteError(error) || attempt === TELEGRAM_LOCK_WRITE_RETRY_ATTEMPTS - 1) throw error;
+      await delay(TELEGRAM_LOCK_WRITE_RETRY_DELAY_MS * (attempt + 1));
+    }
+  }
+  return false;
+}
 interface TelegramLockTransactionOwner {
   pid: number;
   acquiredAtMs: number;

@@ -165,6 +165,7 @@ export function clearTelegramExtensionCommands(): void {
 
 export const TELEGRAM_COMMAND_EMOJI = {
   start: "🟢",
+  pi: "⌨️",
   status: "📊",
   model: "🤖",
   thinking: "🧠",
@@ -309,6 +310,10 @@ export const TELEGRAM_BUILTIN_BOT_COMMANDS: readonly TelegramBotCommandDefinitio
         "stop",
         "Abort Pi & Clear queue",
       ),
+    },
+    {
+      command: "pi",
+      description: formatTelegramBotCommandDescription("pi", "Commands in this Pi session"),
     },
   ];
 
@@ -695,6 +700,7 @@ export const TELEGRAM_RESERVED_COMMAND_NAMES = [
   "settings",
   "help",
   "start",
+  "pi",
 ] as const;
 
 export type TelegramReservedCommandName =
@@ -1160,6 +1166,12 @@ export interface TelegramCommandOrPromptRuntimeDeps<TMessage, TContext> {
     ctx: TContext,
     commandArgs?: string,
   ) => Promise<boolean>;
+  executePiCommand?: (
+    command: ParsedTelegramCommand,
+    messages: TMessage[],
+    ctx: TContext,
+    rawText: string,
+  ) => Promise<boolean>;
   executeExtensionCommand?: (
     command: ParsedTelegramCommand,
     message: TMessage,
@@ -1402,6 +1414,8 @@ export const TELEGRAM_COMMAND_ACTIONS = {
   settings: { kind: "settings", executionMode: "immediate" },
   help: { kind: "help", commandName: "help", executionMode: "immediate" },
   start: { kind: "help", commandName: "start", executionMode: "immediate" },
+  // /pi is handled by the session-command projection after ordinary controls decline.
+  pi: { kind: "ignore", executionMode: "ignored" },
 } as const satisfies Record<TelegramReservedCommandName, TelegramCommandAction>;
 
 export function buildTelegramCommandAction(
@@ -2055,6 +2069,11 @@ export function createTelegramCommandOrPromptRuntime<TMessage, TContext>(
       );
       deps.assertExecutionCurrent?.(firstMessage);
       if (handled) return;
+      if (command?.name === "pi" && deps.executePiCommand) {
+        const handledByPi = await deps.executePiCommand(command, messages, ctx, rawText);
+        deps.assertExecutionCurrent?.(firstMessage);
+        if (handledByPi) return;
+      }
       if (command && deps.executeExtensionCommand) {
         const handledByExtension = await deps.executeExtensionCommand(
           command,
@@ -2662,18 +2681,20 @@ export function createTelegramSessionActionAssembly(
   return { action, settlement };
 }
 
+export type TelegramSessionCommandAction = (ctx: Pi.ExtensionCommandContext) => Promise<void>;
+
 type TelegramPendingInternalAction = {
-  kind: "replace-session";
   token: string;
   updateId: number;
   target: { chatId: number; threadId?: number; messageId: number };
-};
+} & ({ kind: "replace-session" } | { kind: "pi-command"; run: TelegramSessionCommandAction });
 
 export interface TelegramSessionActionRuntime {
   register: () => void;
   scheduleAfterUpdate: (
     updateId: number,
     target: { chatId: number; threadId?: number; messageId: number },
+    run?: TelegramSessionCommandAction,
   ) => boolean;
   onUpdateCompleted: (updateId: number) => void;
   hasPending: () => boolean;
@@ -2688,12 +2709,13 @@ export function createTelegramSessionActionRuntime(
     threadId?: number;
     messageId: number;
   } | undefined;
+  let pendingRun: TelegramSessionCommandAction | undefined;
   let pendingAction: TelegramPendingInternalAction | undefined;
   let registered = false;
 
-  const reportFailure = (error: unknown): void => {
+  const reportFailure = (error: unknown, category = "new-session"): void => {
     try {
-      deps.recordRuntimeEvent?.("new-session", error);
+      deps.recordRuntimeEvent?.(category, error);
     } catch {
       // Diagnostics cannot make a completed durable update retryable.
     }
@@ -2713,6 +2735,13 @@ export function createTelegramSessionActionRuntime(
           }
           pendingAction = undefined;
           switch (action.kind) {
+            case "pi-command":
+              try {
+                await action.run(ctx);
+              } catch (error) {
+                reportFailure(error, "pi-command");
+              }
+              return;
             case "replace-session":
               try {
                 await deps.prepareReplacement?.(ctx, action.updateId, action.target);
@@ -2727,20 +2756,25 @@ export function createTelegramSessionActionRuntime(
         },
       });
     },
-    scheduleAfterUpdate(updateId, target) {
+    scheduleAfterUpdate(updateId, target, run) {
       if (pendingUpdateId !== undefined || pendingAction !== undefined) return false;
       pendingUpdateId = updateId;
       pendingTarget = { ...target };
+      pendingRun = run;
       return true;
     },
     onUpdateCompleted(updateId) {
       if (pendingUpdateId !== updateId) return;
       pendingUpdateId = undefined;
       const target = pendingTarget;
+      const run = pendingRun;
       pendingTarget = undefined;
+      pendingRun = undefined;
       if (!target) return;
       const token = randomUUID();
-      pendingAction = { kind: "replace-session", token, updateId, target };
+      pendingAction = run
+        ? { kind: "pi-command", token, updateId, target, run }
+        : { kind: "replace-session", token, updateId, target };
       void Promise.resolve()
         .then(() =>
           deps.sendUserMessage(`/${TELEGRAM_INTERNAL_COMMAND_NAME} ${token}`, {
@@ -2749,7 +2783,7 @@ export function createTelegramSessionActionRuntime(
         )
         .catch((error) => {
           pendingAction = undefined;
-          reportFailure(error);
+          reportFailure(error, run ? "pi-command" : "new-session");
         });
     },
     hasPending() {

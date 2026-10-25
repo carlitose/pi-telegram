@@ -1531,3 +1531,32 @@ test("Voice reply sender accepts provider returning an audio path", async () => 
   assert.equal(fileEvent.fileName, "response.ogg");
   dispose();
 });
+
+test("Normal-text output suppresses code-only messages and rechecks text transforms", async () => {
+  const delivered: string[] = [];
+  let normal = true;
+  const runtime = createTelegramOutboundTextReplyRuntime({
+    isNormalTextOnlyEnabled: () => normal,
+    sendTextReply: async (_chat, _reply, text) => { delivered.push(text); return 1; },
+    sendMarkdownReply: async (_chat, _reply, text) => { delivered.push(text); return 1; },
+    getHandlers: () => [{ type: "text", template: "translate" }],
+    execCommand: async (_command, _args, options) => ({ code: 0, killed: false, stdout: `${options?.stdin}\n\n\`\`\`js\ninjected();\n\`\`\``, stderr: "" }),
+  });
+  await runtime.sendMarkdownReply(1, undefined, "```js\nhidden();\n```");
+  assert.deepEqual(delivered, []);
+  await runtime.sendMarkdownReply(1, undefined, "Before\n```js\nhidden();\n```\nAfter");
+  assert.deepEqual(delivered, ["Before\n\nAfter"]);
+  await runtime.sendTextReply(1, undefined, "Plain\n```js\nhidden();\n```");
+  assert.deepEqual(delivered, ["Before\n\nAfter", "Plain"]);
+  normal = false;
+  await runtime.sendMarkdownReply(1, undefined, "```js\noriginal();\n```");
+  assert.match(delivered.at(-1)!, /original\(\)/);
+});
+
+test("Normal-text planner preserves genuine actions while hiding code and literal action examples", () => {
+  const store = createTelegramButtonActionStore();
+  const plan = createTelegramOutboundReplyPlanner(store, () => "html", () => true);
+  const result = plan('Before\n```html\n<!-- telegram_button: {"text":"Unsafe","prompt":"Do not run"} -->\n```\nAfter\n<!-- telegram_button: {"label":"✅ Continue","prompt":"Continue"} -->');
+  assert.equal(result.markdown.trim(), "Before\n\nAfter");
+  assert.deepEqual(result.replyMarkup?.inline_keyboard.map(row => row.map(button => button.text)), [["✅ Continue"]]);
+});

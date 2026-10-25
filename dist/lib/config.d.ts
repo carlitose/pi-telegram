@@ -62,6 +62,8 @@ export interface TelegramConfig {
     attachmentHandlers?: TelegramInboundHandlerConfig[];
     outboundHandlers?: TelegramOutboundHandlerConfig[];
     assistant?: {
+        finalOnly?: boolean;
+        normalTextOnly?: boolean;
         draftPreviews?: boolean;
         rendering?: TelegramAssistantRenderingMode;
         activity?: TelegramActivityVerbosity;
@@ -179,6 +181,10 @@ export declare function normalizeTelegramDefaultProfileConfig(config: TelegramCo
     changed: boolean;
 };
 export declare function createTelegramConfigStore(options?: TelegramConfigStoreOptions): TelegramConfigStore;
+export declare function createTelegramNormalTextOnlyChecker(configStore: Pick<TelegramConfigStore, "get">): () => boolean;
+export declare function createTelegramNormalTextOnlySetter(configStore: TelegramMutableConfigStore): (enabled: boolean) => Promise<void>;
+export declare function createTelegramFinalOnlyChecker(configStore: Pick<TelegramConfigStore, "get">): () => boolean;
+export declare function createTelegramFinalOnlySetter(configStore: TelegramMutableConfigStore): (enabled: boolean) => Promise<void>;
 export declare function createTelegramDraftPreviewsChecker(configStore: Pick<TelegramConfigStore, "get">): () => boolean;
 export declare function createTelegramDraftPreviewsSetter(configStore: TelegramMutableConfigStore): (enabled: boolean) => Promise<void>;
 export declare function createTelegramAssistantRenderingModeGetter(configStore: Pick<TelegramConfigStore, "get">): () => TelegramAssistantRenderingMode;
@@ -207,6 +213,10 @@ export declare function createTelegramAutomaticThreadCleanupChecker(configStore:
 export declare function createTelegramAutomaticThreadCleanupResolver(configStore: TelegramMutableConfigStore): () => Promise<boolean>;
 export declare function createTelegramAutomaticThreadCleanupSetter(configStore: TelegramMutableConfigStore): (enabled: boolean) => Promise<void>;
 export declare function createTelegramConfigControls(configStore: TelegramMutableConfigStore): {
+    isNormalTextOnlyEnabled: () => boolean;
+    setNormalTextOnlyEnabled: (enabled: boolean) => Promise<void>;
+    isFinalOnlyEnabled: () => boolean;
+    setFinalOnlyEnabled: (enabled: boolean) => Promise<void>;
     areDraftPreviewsEnabled: () => boolean;
     setDraftPreviewsEnabled: (enabled: boolean) => Promise<void>;
     getAssistantRenderingMode: () => TelegramAssistantRenderingMode;

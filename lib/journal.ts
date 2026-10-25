@@ -1831,6 +1831,15 @@ export function readTelegramUpdateJournalSource(
   }, version).evidence;
 }
 
+function getJournalInspectionOpenFlags(path: string): number {
+  // Windows lacks POSIX open flags. The cooperative, serialized-file contract still
+  // requires lstat/handle/post-read identity and type checks before accepting bytes.
+  if (process.platform !== "win32" && (!constants.O_NOFOLLOW || !constants.O_NONBLOCK)) {
+    throw createJournalError("invalid", path, "platform lacks no-follow nonblocking open evidence");
+  }
+  return constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+}
+
 function acquireTelegramUpdateJournalFamily(
   input: Parameters<typeof inspectTelegramUpdateJournalFamily>[0],
   selectedVersion?: TelegramUpdateJournalFile["version"],
@@ -1850,7 +1859,7 @@ function acquireTelegramUpdateJournalFamily(
   if (!isAbsolute(anchor) || resolve(anchor) !== anchor || !isAbsolute(path) ||
       resolve(path) !== path || !contained || contained === ".." ||
       contained.startsWith(`..${sep}`) || isAbsolute(contained)) fail("escapes its canonical directory anchor");
-  if (!constants.O_NOFOLLOW || !constants.O_NONBLOCK) fail("platform lacks no-follow nonblocking open evidence");
+  const inspectionOpenFlags = getJournalInspectionOpenFlags(path);
   let files = 0;
   let bytes = 0;
   let work = 0;
@@ -1887,7 +1896,7 @@ function acquireTelegramUpdateJournalFamily(
   };
   const read = (target: string, before: BigIntStats): unknown => {
     if (before.size > BigInt(limits.maxBytes - bytes)) capacity();
-    const fd = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    const fd = openSync(target, inspectionOpenFlags);
     try {
       const opened = fstatSync(fd, { bigint: true });
       if (!opened.isFile() || !same(before, opened)) fail("changed before handle acquisition");
@@ -2055,7 +2064,7 @@ export function inspectTelegramProfileJournalNamespace(input: {
   if (!/^[a-z0-9]{1,32}$/u.test(profile)) fail("requires a canonical profile namespace");
   const expected = validateBotIdentity(input.botIdentity, directory);
   if (!isAbsolute(directory) || resolve(directory) !== directory) fail("requires a canonical directory anchor");
-  if (!constants.O_NOFOLLOW || !constants.O_NONBLOCK) fail("platform lacks no-follow nonblocking open evidence");
+  getJournalInspectionOpenFlags(directory);
   const metadata = (target: string) => {
     const value = lstatSync(target, { bigint: true });
     return { dev: value.dev, ino: value.ino, mode: value.mode, nlink: value.nlink,

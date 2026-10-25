@@ -30,6 +30,34 @@ The final-reply path ends silently in several places:
 
 None of these exits records a runtime event, so the logs cannot say which one fired. The transport stamp changes only with profile or bot-token changes, so a stale stamp is unlikely here; a missing active turn or a replaced turn during a run with mid-run steers (`createTelegramMidRunSteerRuntime`, added with the busy-run steering feature) is the leading hypothesis. It is not proven.
 
+## Follow-up evidence (2026-10-22)
+The installed 0.1.2 package has a reproducible publication deadlock. `bindings.onMessageEnd`
+reserves a FIFO position for the first completed assistant answer. A final-turn steer can
+continue that same run without another `agent_start`. Later intermediate output queues
+behind the reservation; the next preview inherits its publication promise. Final delivery
+then uses the old reservation and waits for a preview boundary behind itself. No request
+reaches the transport and no promise rejects, so neither delivery errors nor the ordinary
+active-turn/queue counters expose the wait.
+A synthetic offline reproduction using the installed publication, preview and agent-end
+modules confirms the cycle; its control sends the final reply. The live report is consistent
+with that mechanism, but the live process's pending promises were not inspected.
+The repair releases a provisional final reservation when another assistant message starts,
+before that message can queue progress or inherit preview publication dependencies. The
+actual final answer reserves its current position as before. No timeout, replay or transport
+bypass is introduced; target/session fences and cross-run ordering remain unchanged.
+
+### Windows CI delivery blocker
+Exact-head run `39806230845`, attempts 1 and 2, fails native connect/resume because a
+`state.json` atomic rename throws `EPERM`; the assistant-publication hook is not exercised.
+The existing sharing-retry helper already handles this class of bounded filesystem
+contention elsewhere. Slice 02 also applies its unchanged retry policy at the thread snapshot
+commit boundary: synchronous inside ownership fences, asynchronous on the unfenced path
+so pending filesystem reads can close. A synchronous-only draft failed the native test and
+is retained as failed evidence, not treated as successful verification.
+Injected transient sharing failures must recover; exhausted retries, missing temporary
+files and non-sharing errors must still fail without publishing an invalidation or changing
+the previous durable snapshot. Keep the existing synchronous ownership fence and format.
+
 ## Goal
 A final reply produced for a Telegram turn reaches its exact Telegram target, and when the bridge deliberately does not deliver one it leaves a redacted diagnostic event naming the reason.
 
@@ -52,8 +80,9 @@ A final reply produced for a Telegram turn reaches its exact Telegram target, an
 Unit tests for each event reason; a lifecycle/integration test for invariant 3; `npm run build`, `npm run typecheck`, `npm test`, `npm run build:check`. Live confirmation needs a paired Telegram Thread and is a manual step after installation; no live behavior is claimed from tests.
 
 ## Gates
-- **Attempt:** one pull request in `carlitose/pi-telegram` targeting `release/reactive-next-0`.
-- **Budget and time per attempt:** at most 3 hours; no external spend. **Maximum attempts:** 2.
-- **Approvals:** the agent may merge the pull request once its required checks are green. Publishing `0.1.0-next.1` to npm is done by the user (`npm publish`, browser 2FA). Updating the pin in `pi-personal-config` and installing happen only after the running `dbh-crew` benchmark lot ends.
-- **Exact version:** none.
-- **Existing blocks found:** the `dbh-crew` lot is running (blocks only installation); open pull request #7 `release/reactive-next-0 → main` (does not block this branch). Searched: open pull requests, `package.json` version, repository workflows `validate.yml` and `release.yml`.
+- **Attempt:** current repair pass through handoff, following the 2026-10-07 pass that did not reproduce the failure (PR #9). Target: `release/reactive-next-0`.
+- **Budget and time per attempt:** retain the existing 3-hour limit and no external spend. **Maximum attempts:** retain 2; this is the second repair pass, not a reset of earlier evidence.
+- **Approvals:** implementation and targeted checks approved by the user's “si” on 2026-10-22; the later “si per favore, aggiorna quello che c'e locale winbox e mac” approves commit, PR, CI and updating the package on those three hosts. The subsequent affirmative “certi” approves merge and npm publication after green CI; runtime reload is not approved. No live session is changed by implementation or CI.
+- **Exact version:** none; reproduction uses installed 0.1.2, implementation starts from `8d745f14edddb72437d2540d03215e5b20dbb809`.
+- **Existing blocks found:** no implementation-start block. The repository requires typecheck, generated `dist`, and full tests at its stable gate; the operator forbids heavy full local suites, so full cross-platform validation is deferred to exact-head CI, not waived. The earlier benchmark installation restriction is historical; the newly approved host updates remain deferred until the delivery gates complete. Searched: `AGENTS.md`, `BACKLOG.md`, package scripts and `validate.yml`.
+- **Historical authority:** the October 7 gate allowed one PR merge and publication of `0.1.0-next.1` by the user; it is not treated as a fresh grant to publish or install this repair.

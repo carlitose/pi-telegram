@@ -520,11 +520,11 @@ export function createTelegramAssistantOutputRuntime(deps) {
     let running = false;
     let tail = Promise.resolve();
     const admitted = new Set();
-    const admittedTelegramIntermediateText = new Set();
-    const isEligibleEvent = (event) => (event.source === "telegram" && event.placement === "intermediate") ||
+    const admittedTelegramIntermediateText = new Map();
+    const isEligibleEvent = (event) => !(deps.isFinalOnlyEnabled?.() && event.placement === "intermediate") && ((event.source === "telegram" && event.placement === "intermediate") ||
         event.source === "local" ||
         event.source === "autonomous" ||
-        event.source === "unknown";
+        event.source === "unknown");
     return {
         start() {
             generation += 1;
@@ -543,9 +543,11 @@ export function createTelegramAssistantOutputRuntime(deps) {
             if (admitted.has(key))
                 return;
             admitted.add(key);
-            if (event.source === "telegram" && event.placement === "intermediate") {
-                admittedTelegramIntermediateText.add(event.text.trim());
-            }
+            const intermediate = event.source === "telegram" && event.placement === "intermediate"
+                ? admittedTelegramIntermediateText.get(event.text.trim()) ?? { delivered: false }
+                : undefined;
+            if (intermediate)
+                admittedTelegramIntermediateText.set(event.text.trim(), intermediate);
             const admittedGeneration = generation;
             const admittedAuthority = deps.captureAuthority?.();
             const preparation = deps.prepareSend?.(event);
@@ -564,6 +566,8 @@ export function createTelegramAssistantOutputRuntime(deps) {
                     if (!isAdmittedAuthorityActive() || !deps.canDeliver(event))
                         return;
                     await deps.send(event, admittedAuthority, isAdmittedAuthorityActive);
+                    if (intermediate && isAdmittedAuthorityActive())
+                        intermediate.delivered = true;
                 }
                 catch (error) {
                     deps.recordFailure?.(event, error);
@@ -571,7 +575,10 @@ export function createTelegramAssistantOutputRuntime(deps) {
             }).finally(() => preparation?.settle());
         },
         hasAdmittedTelegramIntermediate(text) {
-            return admittedTelegramIntermediateText.has(text.trim());
+            const intermediate = admittedTelegramIntermediateText.get(text.trim());
+            // A queued segment hidden by a later setting change must remain available
+            // to the empty-final fallback; genuinely delivered text stays deduplicated.
+            return !!intermediate && (intermediate.delivered || !deps.isFinalOnlyEnabled?.());
         },
         waitForIdle() {
             return tail;

@@ -7,6 +7,8 @@ export declare const MAX_MESSAGE_LENGTH = 4096;
 export declare function escapeHtml(text: string): string;
 export declare function escapeHtmlAttribute(text: string): string;
 export declare function chunkHtmlPreservingTags(html: string, maxLength: number): string[];
+/** Project completed assistant Markdown without changing its source/history. */
+export declare function stripTelegramAssistantCodeBlocks(markdown: string): string;
 export declare function renderTelegramInlineMarkdownHtml(text: string, options?: {
     allowLinks?: boolean;
 }): string;

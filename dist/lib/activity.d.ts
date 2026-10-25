@@ -212,6 +212,7 @@ export interface TelegramAssistantOutputPreparation {
     settle: () => void;
 }
 export declare function createTelegramAssistantOutputRuntime<TAuthority = undefined>(deps: {
+    isFinalOnlyEnabled?: () => boolean;
     prepareSend?: (event: TelegramAssistantSegmentEvent) => TelegramAssistantOutputPreparation | undefined;
     enqueue?: TelegramActivityPublicationRuntime["enqueue"];
     captureAuthority?: () => TAuthority;

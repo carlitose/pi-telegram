@@ -8,7 +8,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerTelegramVoiceSynthesisProvider } from "../lib/voice.ts";
-import { createTelegramActivityPublicationRuntime } from "../lib/activity.ts";
+import { createTelegramActivityPublicationRuntime, createTelegramAssistantOutputRuntime } from "../lib/activity.ts";
 import { extractRunAssistantMessage } from "../lib/replies.ts";
 import { TelegramApiCommitUnknownError } from "../lib/telegram-api.ts";
 import { createTelegramPreviewController, createTelegramAssistantPreviewRuntime } from "../lib/preview.ts";
@@ -7332,4 +7332,43 @@ test("Queue handoff payload preserves the /later marker", () => {
     createQueueTestPromptTurn({ admissionReceipts: [receipt] }),
   );
   assert.equal("deferUntilIdle" in plain, false);
+});
+
+
+test("Final-only hidden commentary is recovered exactly once through empty-final settlement", async () => {
+  for (const finalOnly of [true, false]) {
+    const delivered: string[] = [];
+    const output = createTelegramAssistantOutputRuntime({
+      isFinalOnlyEnabled: () => finalOnly,
+      canDeliver: () => true,
+      send: async (event) => { delivered.push(event.text); },
+    });
+    output.start();
+    output.accept({ type: "assistant-segment", activityId: "fallback", sequence: 1,
+      source: "telegram", timestamp: 1, contentIndex: 0,
+      text: "preserved answer", placement: "intermediate" });
+    await output.waitForIdle();
+    const turn = createQueueTestPromptTurn({ chatId: 7, replyToMessageId: 11 });
+    const hook = createTelegramAgentEndHook<PendingTelegramTurn, { id: string }, unknown>({
+      getActiveTurn: () => turn,
+      extractAssistant: extractRunAssistantMessage,
+      isAssistantAlreadyPublished: (assistant) => output.hasAdmittedTelegramIntermediate(assistant.text ?? ""),
+      getFoldQueuedPromptsIntoHistory: () => false,
+      resetRuntimeState: () => {}, updateStatus: () => {},
+      dispatchNextQueuedTelegramTurn: () => {},
+      requestDeferredDispatchNextQueuedTelegramTurn: (dispatch) => dispatch({ id: "session" }),
+      clearPreview: async () => {}, setPreviewPendingText: () => {},
+      finalizeMarkdownPreview: async () => false,
+      sendMarkdownReply: async (_chat, _replyTo, markdown) => { delivered.push(markdown); },
+      sendTextReply: async () => { assert.fail("unexpected text fallback"); },
+      sendQueuedAttachments: async () => {},
+    });
+    await hook({ messages: [
+      { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "preserved answer" }] },
+      { role: "custom", customType: "state-flow-validation" },
+      { role: "assistant", stopReason: "stop", content: [] },
+    ] }, { id: "session" });
+    assert.deepEqual(delivered, ["preserved answer"]);
+    output.stop();
+  }
 });

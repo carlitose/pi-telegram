@@ -1346,7 +1346,7 @@ test("Lifecycle binding disconnects only graceful quit and preserves cleanup aft
   ]);
 });
 
-test("Lifecycle binding routes native typing, previews, and normalized activity", async () => {
+test("Lifecycle binding routes native typing, previews, and normalized activity", { timeout: 5000 }, async () => {
   const events: string[] = [];
   const harness = createBindingApiHarness();
   const runtime = Runtime.createTelegramBridgeRuntime();
@@ -1362,6 +1362,7 @@ test("Lifecycle binding routes native typing, previews, and normalized activity"
         ),
       onAssistantEvent: (event: { type: string }) =>
         events.push(`activity:assistant:${event.type}`),
+      onAssistantMessageEnd: () => {},
       onToolStart: (event: { toolName: string }) =>
         events.push(`activity:tool-start:${event.toolName}`),
       onToolUpdate: (event: { toolName: string }) =>
@@ -1420,6 +1421,7 @@ test("Lifecycle binding routes native typing, previews, and normalized activity"
       resetState: () => undefined,
       clear: () => {},
       setPendingText: () => {},
+      seal: () => {},
       onMessageStart: async () => events.push("preview:start"),
       onMessageUpdate: async () => events.push("preview:update"),
     },
@@ -1561,4 +1563,146 @@ test("Lifecycle binding routes native typing, previews, and normalized activity"
   // Pi hooks keep their order without waiting for the independently delivered projection.
   assert.deepEqual(events.filter((event) => !event.startsWith("send:")), expected.filter((event) => !event.startsWith("send:")));
   assert.deepEqual(events.filter((event) => event.startsWith("send:")), expected.filter((event) => event.startsWith("send:")));
+
+  activeTurn = true;
+  await getRequiredBindingHandler(harness.handlers, "message_end")({ message: {
+    role: "assistant", stopReason: "stop", content: [{ type: "text", text: "provisional final" }],
+  } }, {} as ExtensionContext);
+  let publicationReleased = false;
+  const waitingPublication = deps.publicationRuntime.enqueue(async () => { publicationReleased = true; });
+  for (const role of ["user", "toolResult"]) {
+    await getRequiredBindingHandler(harness.handlers, "message_start")(
+      { message: { role } }, {} as ExtensionContext,
+    );
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(publicationReleased, false, `${role} must retain the provisional final slot`);
+  }
+  await getRequiredBindingHandler(harness.handlers, "message_start")(
+    { message: { role: "assistant" } }, {} as ExtensionContext,
+  );
+  await waitingPublication;
+  assert.equal(publicationReleased, true, "a continued assistant message releases the old final slot");
 });
+
+
+for (const rendering of ["rich", "html"] as const) {
+  for (const route of ["direct", "follower"] as const) {
+    test(`Final-only binding preserves ${rendering} ${route} finals`, async () => {
+      const bodies: Array<Record<string, unknown>> = [];
+      let preparations = 0;
+      let plans = 0;
+      const target = { chatId: 7, threadId: 42 };
+      const transport = BusApi.createTelegramBusAwareApiRuntime({
+        directRuntime: {
+          sendMessage: async (body: Record<string, unknown>) => { bodies.push(body); return { message_id: bodies.length }; },
+          sendRichMessage: async (body: Record<string, unknown>) => { bodies.push(body); return { message_id: bodies.length }; },
+        } as unknown as TelegramBridgeApiRuntime,
+        ownsDirect: () => route === "direct",
+        callFollowerApi: async (_method, args) => { bodies.push(args[1] as Record<string, unknown>); return { message_id: bodies.length }; },
+      });
+      const binding = createTelegramAssistantOutputBindingRuntime({
+        isFinalOnlyEnabled: () => true,
+        authority: {
+          getPreferredTarget: () => target, getFallbackChatId: () => 7,
+          getTransportStamp: () => "stamp", isTransportStampActive: () => true,
+          ownsDirect: () => route === "direct", getDirectEpoch: () => 1,
+          isFollowerRegistered: () => route === "follower", getFollowerGeneration: () => "follower-1",
+        },
+        sender: {
+          sendMessage: transport.sendMessage, sendRichMessage: transport.sendRichMessage,
+          editMessage: async () => {}, getAssistantRenderingMode: () => rendering,
+          planButtonReply: (markdown) => { plans++; return { markdown }; },
+          execCommand: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
+        },
+        prepareTelegramPreview: () => { preparations++; return undefined; },
+        recordRuntimeEvent: (_kind, error) => { throw error; },
+      });
+      const event = (sequence: number, source: Activity.TelegramAssistantSegmentEvent["source"], placement: Activity.TelegramAssistantSegmentEvent["placement"]) => ({
+        type: "assistant-segment" as const, activityId: "final-only", sequence, source, placement,
+        timestamp: sequence, contentIndex: 0, target, text: `${source}-${placement}`,
+      });
+      binding.runtime.start();
+      for (const [index, source] of (["telegram", "local", "autonomous", "unknown"] as const).entries()) {
+        binding.observeEvent(event(index + 1, source, "intermediate"));
+      }
+      await binding.runtime.waitForIdle();
+      assert.equal(bodies.length, 0);
+      assert.equal(plans, 0);
+      assert.equal(preparations, 0);
+      assert.equal(binding.runtime.hasAdmittedTelegramIntermediate("telegram-intermediate"), false);
+      binding.observeEvent(event(5, "local", "final"));
+      binding.observeEvent(event(6, "autonomous", "terminal-partial"));
+      await binding.runtime.waitForIdle();
+      assert.equal(bodies.length, 2);
+      assert.equal(plans, 2);
+      for (const body of bodies) {
+        assert.equal(body.chat_id, target.chatId);
+        assert.equal(body.message_thread_id, target.threadId);
+        assert.equal(body.disable_notification, undefined);
+      }
+      binding.runtime.stop();
+    });
+  }
+}
+
+for (const rendering of ["rich", "html"] as const) {
+  for (const route of ["direct", "follower"] as const) {
+    test(`Normal-text binding publishes completed ${rendering} ${route} intermediates without waiting for settlement`, async () => {
+      const bodies: Array<Record<string, unknown>> = [];
+      const target = { chatId: 7, threadId: 42 };
+      let current = true;
+      const transport = BusApi.createTelegramBusAwareApiRuntime({
+        directRuntime: {
+          sendMessage: async (body: Record<string, unknown>) => { bodies.push(body); return { message_id: bodies.length }; },
+          sendRichMessage: async (body: Record<string, unknown>) => { bodies.push(body); return { message_id: bodies.length }; },
+        } as unknown as TelegramBridgeApiRuntime,
+        ownsDirect: () => route === "direct",
+        callFollowerApi: async (_method, args) => { bodies.push(args[1] as Record<string, unknown>); return { message_id: bodies.length }; },
+      });
+      const binding = createTelegramAssistantOutputBindingRuntime({
+        isFinalOnlyEnabled: () => false,
+        authority: {
+          getPreferredTarget: () => target, getFallbackChatId: () => 7,
+          getTransportStamp: () => "normal-stamp", isTransportStampActive: () => current,
+          ownsDirect: () => route === "direct", getDirectEpoch: () => 1,
+          isFollowerRegistered: () => route === "follower", getFollowerGeneration: () => "normal-follower",
+        },
+        sender: {
+          sendMessage: transport.sendMessage, sendRichMessage: transport.sendRichMessage,
+          editMessage: async () => {}, getAssistantRenderingMode: () => rendering,
+          isNormalTextOnlyEnabled: () => true,
+          execCommand: async () => ({ stdout: "", stderr: "", code: 0, killed: false }),
+        },
+        recordRuntimeEvent: (_kind, error) => { throw error; },
+      });
+      binding.runtime.start();
+      const event = (sequence: number, source: Activity.TelegramAssistantSegmentEvent["source"], placement: Activity.TelegramAssistantSegmentEvent["placement"], text: string) => ({
+        type: "assistant-segment" as const, activityId: "normal-text", sequence, source, placement,
+        timestamp: sequence, contentIndex: sequence, target, text,
+      });
+      for (const [i, source] of (["telegram", "local", "autonomous"] as const).entries()) {
+        binding.observeEvent(event(i + 1, source, "intermediate", `Visible ${source}\n\`\`\`js\nhidden();\n\`\`\``));
+      }
+      await binding.runtime.waitForIdle();
+      assert.equal(bodies.length, 3);
+      for (const body of bodies) {
+        assert.equal(body.chat_id, target.chatId);
+        assert.equal(body.message_thread_id, target.threadId);
+        assert.equal(body.disable_notification, true);
+        assert.doesNotMatch(JSON.stringify(body), /hidden\(\)|```/);
+      }
+      binding.observeEvent(event(4, "autonomous", "final", "Final ordinary answer"));
+      await binding.runtime.waitForIdle();
+      assert.equal(bodies.length, 4);
+      assert.equal(bodies.at(-1)!.disable_notification, undefined);
+      binding.observeEvent(event(5, "local", "final", "```js\nonlyCode();\n```"));
+      await binding.runtime.waitForIdle();
+      assert.equal(bodies.length, 4);
+      current = false;
+      binding.observeEvent(event(6, "autonomous", "intermediate", "Stale output"));
+      await binding.runtime.waitForIdle();
+      assert.equal(bodies.length, 4);
+      binding.runtime.stop();
+    });
+  }
+}

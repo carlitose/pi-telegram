@@ -4410,8 +4410,10 @@ test("Workspace rotation integrates leader and follower allocation without bypas
         callMultipart: async () => true, downloadFile: async () => undefined,
         getSyncState: () => ({}), setSyncState() {}, setLeaderTarget() {}, recordRuntimeEvent() {},
       });
+      // Serialized filesystem retirement is not a one-second transport timing assertion.
+      // Keep a bounded fixture deadline without changing production timeouts or retries.
       const register = (instanceId: string, restore = false, cwd = `/fresh/${instanceId}`, sessionId = "fresh-session") =>
-        sendTelegramBusLocalEnvelope({ socketPath, envelope: {
+        sendTelegramBusLocalEnvelope({ socketPath, timeoutMs: 10_000, envelope: {
           kind: restore ? "follower.restoreWorkspace" : "follower.register", requestId: `register:${instanceId}`,
           registration: { instanceId, cwd, sessionId, registrationGeneration: `${instanceId}:1`,
             connectedAtMs: 1, protocol: TEST_BUS_PROTOCOL_IDENTITY },

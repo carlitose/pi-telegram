@@ -418,7 +418,10 @@ for (const role of ["leader", "follower"] as const) {
         await new Promise<void>((resolve) => setImmediate(resolve));
         assert.equal(starts, 1);
         assert.deepEqual(failures, []);
-      } finally { await rm(dir, { recursive: true, force: true }); }
+      } finally {
+        // Windows can transiently retain entries after the awaited atomic writes.
+        await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      }
     });
   }
 }
@@ -520,7 +523,7 @@ test("Storage reference preparation rejects historical aliases without redirecti
       assert.deepEqual(references[0], references[1]);
       assert.equal(fs.existsSync(Paths.resolveTelegramUpdateJournalPath(undefined, "work")), false);
       assert.equal(fs.existsSync(Paths.resolveTelegramWorkspaceAdmissionPath(undefined, "work")), false);
-      if (fs.constants.O_NOFOLLOW && fs.constants.O_NONBLOCK) {
+      if (process.platform === "win32" || (fs.constants.O_NOFOLLOW && fs.constants.O_NONBLOCK)) {
         const before = snapshot(root);
         const census = Journal.inspectTelegramProfileJournalNamespace({
           directory: Paths.resolveTelegramTempDir(), profile: "work",
@@ -6532,6 +6535,10 @@ test(`Extension runtime delivers the final reply of a run that absorbed ${steers
     }
     throw new Error(`Unexpected Telegram API method: ${method}`);
   });
+  const ctx = createRuntimeExtensionContext({
+    isIdle: () => idle,
+    hasPendingMessages: () => piPending,
+  });
   const steerAt = async (
     turnEnd: Record<string, unknown>,
     ctx: unknown,
@@ -6555,10 +6562,6 @@ test(`Extension runtime delivers the final reply of a run that absorbed ${steers
   try {
     await telegramConfig.write({ botToken: "123:abc", allowedUserId: 77, lastUpdateId: 0 });
     (await getRuntimeTelegramExtension())(pi);
-    const ctx = createRuntimeExtensionContext({
-      isIdle: () => idle,
-      hasPendingMessages: () => piPending,
-    });
     await handlers.get("session_start")?.({}, ctx);
     await commands.get("telegram-connect")?.handler("", ctx);
     await waitForCondition(() => sentMessages.length === 1);
@@ -6588,6 +6591,23 @@ test(`Extension runtime delivers the final reply of a run that absorbed ${steers
     await flushMicrotasks(20);
     if (steers >= 2) await steerAt({ message: firstAnswer, toolResults: [] }, ctx, 3);
 
+    if (steers >= 2) {
+      // A continued run can stream progress before its next final answer. This
+      // publication used to queue behind the first answer's provisional slot.
+      const progress = {
+        role: "assistant", stopReason: "toolUse",
+        content: [{ type: "text", text: "reading after the final-turn steer" }],
+      };
+      await handlers.get("message_start")?.({ message: progress }, ctx);
+      await handlers.get("message_update")?.({ message: progress, assistantMessageEvent: {
+        type: "text_end", contentIndex: 0, content: progress.content[0]!.text,
+      } }, ctx);
+      await handlers.get("message_update")?.({ message: progress, assistantMessageEvent: {
+        type: "toolcall_start", contentIndex: 1,
+      } }, ctx);
+      await handlers.get("message_end")?.({ message: progress }, ctx);
+    }
+
     const finalAnswer = {
       role: "assistant",
       stopReason: "stop",
@@ -6606,11 +6626,23 @@ test(`Extension runtime delivers the final reply of a run that absorbed ${steers
     await waitForCondition(() => delivered("simple final explanation").length > 0);
     assert.equal(delivered("simple final explanation").length, 1);
     for (const call of delivered("simple final explanation")) assert.equal(call.body.chat_id, 99);
-    finalUpdates.resolve(createRuntimeTelegramApiResponse([]));
-    await handlers.get("session_shutdown")?.({}, ctx);
+    if (steers >= 2) {
+      const progress = delivered("reading after the final-turn steer");
+      assert.equal(progress.length, 1);
+      assert.equal(progress[0]!.body.chat_id, 99);
+      assert.ok(apiCalls.indexOf(progress[0]!) < apiCalls.indexOf(delivered("simple final explanation")[0]!));
+      assert.equal(delivered("pushed; the colleague is unknown").length, 0);
+    }
   } finally {
-    restoreFetch();
-    await telegramConfig.restore();
+    busyUpdates.resolve(createRuntimeTelegramApiResponse([]));
+    secondUpdates.resolve(createRuntimeTelegramApiResponse([]));
+    finalUpdates.resolve(createRuntimeTelegramApiResponse([]));
+    try {
+      await handlers.get("session_shutdown")?.({}, ctx);
+    } finally {
+      restoreFetch();
+      await telegramConfig.restore();
+    }
   }
 }, 20_000);
 }
@@ -8717,5 +8749,66 @@ test("Extension runtime delays model-switch abort until the active tool finishes
   } finally {
     restoreFetch();
     await telegramConfig.restore();
+  }
+});
+
+
+test("Pi SDK dispatches a durable gateway callback into a real extension command context without inference", async () => {
+  const { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } = await import("@earendil-works/pi-coding-agent");
+  const PiCommands = await import("../lib/pi-commands.ts");
+  const directory = await mkdtemp(join(tmpdir(), "pi-commands-sdk-"));
+  const captured: { action?: Commands.TelegramSessionActionRuntime; api?: import("../lib/pi.ts").ExtensionAPI } = {};
+  let complete!: () => void;
+  const completed = new Promise<void>(resolve => { complete = resolve; });
+  const received: string[] = [];
+  const failures: unknown[] = [];
+  const sessionManager = SessionManager.inMemory(directory);
+  const settingsManager = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
+  const modelRuntime = await ModelRuntime.create({ authPath: join(directory, "auth.json"), modelsPath: join(directory, "models.json"), modelsStorePath: join(directory, "models-store.json"), allowModelNetwork: false });
+  const loader = new DefaultResourceLoader({
+    cwd: directory, agentDir: directory, settingsManager,
+    noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
+    extensionFactories: [api => {
+      captured.api = api;
+      api.registerCommand("namespace/test-pi-goal", { description: "SDK fixture", handler: async (args, ctx) => {
+        assert.equal(ctx.sessionManager.getSessionId(), sessionManager.getSessionId());
+        assert.equal(typeof ctx.waitForIdle, "function");
+        assert.equal(typeof ctx.reload, "function");
+        received.push(args);
+        complete();
+      } });
+      captured.action = Commands.createTelegramSessionActionRuntime({
+        registerCommand: api.registerCommand, sendUserMessage: api.sendUserMessage,
+        async notifyResult() { throw new Error("No session replacement was requested"); },
+        recordRuntimeEvent(_category, error) { failures.push(error); },
+      });
+      captured.action.register();
+    }],
+  });
+  let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
+  try {
+    await loader.reload();
+    assert.deepEqual(loader.getExtensions().errors, []);
+    ({ session } = await createAgentSession({ cwd: directory, agentDir: directory, modelRuntime, settingsManager, sessionManager, resourceLoader: loader, noTools: "all" }));
+    await session.bindExtensions({});
+    session.agent.streamFunction = () => { throw new Error("Unexpected inference in a Pi command"); };
+    assert.ok(captured.action);
+    assert.ok(captured.api);
+    const api = captured.api;
+    const plan = PiCommands.planTelegramPiCommand('namespace/test-pi-goal one "two words"', api.getCommands());
+    assert.equal(plan.kind, "invoke");
+    if (plan.kind !== "invoke") throw new Error("Missing SDK invocation");
+    captured.action.scheduleAfterUpdate(71, { chatId: 7, messageId: 11 }, async ctx => {
+      await PiCommands.executeTelegramPiCommand(plan.request, { ctx, getCommands: api.getCommands, sendUserMessage: api.sendUserMessage, isCurrent: () => true, reply: async () => {} });
+    });
+    assert.equal(received.length, 0);
+    captured.action.onUpdateCompleted(71);
+    await completed;
+    assert.deepEqual(received, ['one "two words"']);
+    assert.deepEqual(failures, []);
+    assert.equal(session.messages.length, 0);
+  } finally {
+    session?.dispose();
+    await rm(directory, { recursive: true, force: true });
   }
 });
