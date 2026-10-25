@@ -2,6 +2,8 @@
 
 > Each release keeps at most 8 outcome records of at most 512 characters.
 
+## Unreleased
+
 ## 0.1.6: Normal assistant text
 
 - `Normal assistant text`: one Settings switch shows completed intermediate and final ordinary text while hiding thinking/tools, token drafts and code/diff blocks. Surrounding prose and native controls survive; text transforms cannot restore removed code. Stored preferences remain intact. Uses existing ordered delivery without inspecting Goal/Loop or waiting for automation completion.
