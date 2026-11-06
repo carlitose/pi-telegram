@@ -69,6 +69,7 @@ import {
 import { runTelegramPollLoop } from "../lib/polling.ts";
 import {
   createTelegramTopicTargetStore,
+  normalizeTelegramWorkspacePath,
   type TelegramSessionReplacementIntent,
 } from "../lib/threads.ts";
 import { createTelegramPollingStartRecoveryHandler } from "../lib/recovery.ts";
@@ -2850,6 +2851,58 @@ test("Classic session action publishes chat continuity without a Workspace bindi
     sourceSessionId: "session-old", sourceUpdateId: 41,
     target: { chatId: 7 }, messageId: 9, createdAtMs: 1000, expiresAtMs: 31_000,
   }]);
+});
+
+test("Workspace Thread /new matches the binding against the native session cwd", async () => {
+  // Pi exposes the native cwd (C:\ on Windows); bindings keep the normalized path.
+  const nativeCwd = process.platform === "win32" ? "C:\\Users\\dev\\repo" : "/home/dev/repo/";
+  const boundCwd = normalizeTelegramWorkspacePath(nativeCwd)!;
+  assert.notEqual(boundCwd, nativeCwd);
+  const threadTarget = { chatId: 7, threadId: 8 };
+  const commands = new Map<string, RegisteredCommand>();
+  const dispatched: string[] = [];
+  const results: string[] = [];
+  const state = { sessionId: "session-old", intent: undefined as TelegramSessionReplacementIntent | undefined };
+  const assembly = createTelegramSessionActionAssembly({
+    registerCommand: (name, definition) => { commands.set(name, definition as RegisteredCommand); },
+    sendUserMessage: async (content) => { dispatched.push(content as string); },
+    store: {
+      load: async () => {}, refresh: async () => {},
+      getWorkspaceBindingByTarget: () => ({ cwd: boundCwd, sessionId: state.sessionId,
+        slot: "P", threadName: "Pine", target: threadTarget }),
+      getSessionReplacementIntent: () => state.intent,
+      commitSessionReplacementIntent: async (intent) => { state.intent = intent; return true; },
+      removeSessionReplacementIntent: async () => { state.intent = undefined; return true; },
+    },
+    getProfileName: () => undefined,
+    ownsPersistence: () => true,
+    sendResult: async (_target, html) => { results.push(html); return { ok: true }; },
+    handoffTtlMs: 30_000,
+  });
+  assembly.action.register();
+  assert.equal(assembly.action.scheduleAfterUpdate(41, { ...threadTarget, messageId: 9 }), true);
+  assembly.action.onUpdateCompleted(41);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  let newSessions = 0;
+  await commands.get(TELEGRAM_INTERNAL_COMMAND_NAME)!.handler(
+    getInternalCommandToken(dispatched[0]!), {
+    cwd: nativeCwd,
+    sessionManager: { getSessionId: () => "session-old" },
+    newSession: async () => { newSessions += 1; return { cancelled: false }; },
+  } as unknown as ExtensionCommandContext);
+  assert.equal(newSessions, 1);
+  assert.deepEqual(results, []);
+  assert.equal(state.intent?.cwd, boundCwd);
+
+  // The successor session starts with the same native cwd and claims the intent.
+  state.sessionId = "session-new";
+  assembly.settlement.onSessionStart({ cwd: nativeCwd,
+    sessionManager: { getSessionId: () => "session-new" } } as unknown as ExtensionContext);
+  for (let attempt = 0; attempt < 100 && results.length === 0; attempt += 1) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+  assert.deepEqual(results, ["<b>🆕 New session started.</b>"]);
+  assert.equal(state.intent, undefined);
 });
 
 test("Follower Thread session action publishes and settles through leader-mediated authority", async () => {
