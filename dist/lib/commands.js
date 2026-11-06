@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { pairTelegramUserIfNeeded, TELEGRAM_DEFAULT_PROFILE_NAME, } from "./config.js";
 import { escapeHtml } from "./rendering.js";
 import { formatTelegramConnectionFailure } from "./status.js";
+import { normalizeTelegramWorkspacePath } from "./threads.js";
 import { createTelegramControlItemBuilder, createTelegramControlQueueController, createTelegramQueueAdmissionReceipt, } from "./queue.js";
 const TELEGRAM_EXTENSION_COMMAND_REGISTRY_KEY = "__piTelegramCommandRegistry__";
 const TELEGRAM_BOT_COMMAND_NAME_PATTERN = /^[a-z0-9_]{1,32}$/;
@@ -1340,8 +1341,10 @@ export async function settleTelegramSessionReplacement(deps) {
         const intent = await deps.getIntent();
         if (!intent || intent.sourceSessionId === deps.sessionId)
             return "none";
-        if (intent.profileName !== deps.profileName || intent.cwd !== deps.cwd)
+        if (intent.profileName !== deps.profileName ||
+            normalizeTelegramWorkspacePath(intent.cwd) !== normalizeTelegramWorkspacePath(deps.cwd)) {
             return "stale";
+        }
         if (now() >= intent.expiresAtMs)
             return "expired";
         if (!deps.hasSuccessorContinuity(intent)) {
@@ -1414,8 +1417,10 @@ export function createTelegramSessionActionAssembly(deps) {
             const binding = typeof target.threadId === "number"
                 ? deps.store.getWorkspaceBindingByTarget(target)
                 : undefined;
+            // Bindings keep the normalized Workspace path; Pi exposes the native one (C:\ on Windows).
             if (typeof target.threadId === "number" &&
-                (!binding || binding.cwd !== ctx.cwd || binding.sessionId !== sessionId)) {
+                (!binding || binding.cwd !== normalizeTelegramWorkspacePath(ctx.cwd) ||
+                    binding.sessionId !== sessionId)) {
                 throw new Error("Telegram session replacement binding is unavailable.");
             }
             const createdAtMs = now();

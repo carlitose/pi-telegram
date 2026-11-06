@@ -7,7 +7,7 @@ import { type TelegramConfigStore } from "./config.ts";
 import type * as Pi from "./pi.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "./pi.ts";
 import { type TelegramBridgeStatusLineOptions } from "./status.ts";
-import type { TelegramSessionReplacementIntent } from "./threads.ts";
+import { type TelegramSessionReplacementIntent } from "./threads.ts";
 import { type PendingTelegramControlItem, type TelegramQueueAdmissionReceipt } from "./queue.ts";
 export interface ParsedTelegramCommand {
     name: string;

@@ -15,7 +15,7 @@ import type * as Pi from "./pi.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "./pi.ts";
 import { escapeHtml } from "./rendering.ts";
 import { formatTelegramConnectionFailure, type TelegramBridgeStatusLineOptions } from "./status.ts";
-import type { TelegramSessionReplacementIntent } from "./threads.ts";
+import { normalizeTelegramWorkspacePath, type TelegramSessionReplacementIntent } from "./threads.ts";
 import {
   createTelegramControlItemBuilder,
   createTelegramControlQueueController,
@@ -2492,7 +2492,10 @@ export async function settleTelegramSessionReplacement(
   while (deps.isCurrent?.() !== false) {
     const intent = await deps.getIntent();
     if (!intent || intent.sourceSessionId === deps.sessionId) return "none";
-    if (intent.profileName !== deps.profileName || intent.cwd !== deps.cwd) return "stale";
+    if (intent.profileName !== deps.profileName ||
+        normalizeTelegramWorkspacePath(intent.cwd) !== normalizeTelegramWorkspacePath(deps.cwd)) {
+      return "stale";
+    }
     if (now() >= intent.expiresAtMs) return "expired";
     if (!deps.hasSuccessorContinuity(intent)) {
       await sleep(100);
@@ -2617,8 +2620,10 @@ export function createTelegramSessionActionAssembly(
       const binding = typeof target.threadId === "number"
         ? deps.store.getWorkspaceBindingByTarget(target)
         : undefined;
+      // Bindings keep the normalized Workspace path; Pi exposes the native one (C:\ on Windows).
       if (typeof target.threadId === "number" &&
-          (!binding || binding.cwd !== ctx.cwd || binding.sessionId !== sessionId)) {
+          (!binding || binding.cwd !== normalizeTelegramWorkspacePath(ctx.cwd) ||
+            binding.sessionId !== sessionId)) {
         throw new Error("Telegram session replacement binding is unavailable.");
       }
       const createdAtMs = now();

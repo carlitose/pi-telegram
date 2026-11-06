@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+## 0.1.7: Windows /new
+
+- `Windows /new`: Telegram `/new` in a Workspace Thread now compares the bound Workspace path with Pi's native session cwd in normalized form. Windows sessions (`C:\…`) no longer always report a failed new session, and the successor session claims its handoff instead of discarding it as stale. Other commands do not compare the cwd and are unaffected.
+
 ## 0.1.6: Normal assistant text
 
 - `Normal assistant text`: one Settings switch shows completed intermediate and final ordinary text while hiding thinking/tools, token drafts and code/diff blocks. Surrounding prose and native controls survive; text transforms cannot restore removed code. Stored preferences remain intact. Uses existing ordered delivery without inspecting Goal/Loop or waiting for automation completion.
