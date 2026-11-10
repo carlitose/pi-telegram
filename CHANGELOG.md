@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+## 0.1.8: Workspace slots after unclean exits
+
 - `Workspace slots`: A Pi that ends without a clean exit (crash, kill, or closing its window on Windows) no longer holds its Workspace letter forever. When the leader starts and when `A`–`Z` are full, it detaches owners whose process is gone and marks bindings whose known owners are all gone as inactive, so pressure rotation can reuse their letters; this never deletes a Thread. Leader bindings also keep complete journal evidence across restarts.
 
 ## 0.1.7: Windows /new
