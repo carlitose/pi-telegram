@@ -10,7 +10,7 @@ import * as ThreadReconciler from "./thread-reconciler.ts";
 import { type TelegramApiCallOptions } from "./telegram-api.ts";
 import type { TelegramTarget } from "./target.ts";
 import * as Threads from "./threads.ts";
-import { type TelegramBusEnvelope, type TelegramBusFollowerRegistry, type TelegramBusFollowerView, type TelegramBusInstanceRegistration, type TelegramBusProtocolIdentity, type TelegramBusSocketPathSource } from "./bus.ts";
+import { type TelegramBusEnvelope, type TelegramBusFollowerRegistry, type TelegramBusFollowerView, type TelegramBusInstanceRegistration, type TelegramBusProtocolIdentity, type TelegramProcessLiveness, type TelegramBusSocketPathSource } from "./bus.ts";
 import type { TelegramQueueHandoffPayload } from "./queue.ts";
 import { type TelegramWorkspaceCapacityRunner, type TelegramWorkspaceSlotRotationPorts, type TelegramWorkspaceOperationRunner } from "./workspace-retirement.ts";
 import { type TelegramWorkspaceAdmissionLedger } from "./workspace-admission.ts";
@@ -244,6 +244,24 @@ export declare function createTelegramBusFollowerTargetProvisioner(deps: Telegra
 }) | undefined>;
 export declare function createTelegramBusFollowerDisconnectHandler(deps: TelegramBusFollowerDisconnectHandlerDeps): (follower: TelegramBusFollowerView) => Promise<void>;
 export declare function createTelegramBusFollowerConfirmedDeadHandler(deps: TelegramBusFollowerDisconnectHandlerDeps): (follower: TelegramBusFollowerView) => Promise<void>;
+export interface TelegramDeadPersistedOwnerReconcilerDeps {
+    instanceId: string;
+    topicTargetStore: Pick<Threads.TelegramTopicTargetStore, "load" | "list" | "listWorkspaceBindings" | "detachTargetOwner" | "markOfflineByInstanceId" | "markOwnerlessWorkspaceBindingsInactive" | "persist">;
+    listFollowers: () => readonly Pick<TelegramBusFollowerView, "instanceId" | "target">[];
+    getOwnerLiveness?: (instanceId: string) => TelegramProcessLiveness;
+    getCurrentLeaderEpoch?: () => number | string | undefined;
+    getTelegramProfile?: () => string | undefined;
+    runWorkspaceOperation: TelegramWorkspaceOperationRunner;
+    recordRuntimeEvent: (category: string, error: unknown, details?: Record<string, unknown>) => void;
+}
+/**
+ * Leader-side recovery for owners that ended without a Telegram detach (crash, kill,
+ * Windows window close). Only an absent exact PID proves death; detachment never calls
+ * Telegram and only the existing pressure rotation may later delete the Thread. Bindings
+ * already without an owner record are stamped inactive once all their known owners are dead.
+ * Resolves to the number of detached owners plus stamped bindings.
+ */
+export declare function createTelegramDeadPersistedOwnerReconciler(deps: TelegramDeadPersistedOwnerReconcilerDeps): (isCallerCurrent?: () => boolean) => Promise<number>;
 export declare function createTelegramBusLeaderTargetProvisioner<TContext>(deps: TelegramBusLeaderTargetProvisionerDeps<TContext>): (ctx: TContext) => Promise<void>;
 export declare function createTelegramBusLeaderApiProxy(deps: TelegramBusLeaderApiProxyDeps): (method: string, args: unknown[]) => Promise<unknown>;
 type TelegramBusFollowerMutationRunner = <T>(follower: {

@@ -316,6 +316,8 @@ export interface TelegramWorkspaceThreadBinding {
   showSlotSuffix?: boolean;
   /** First continuously proven no-owner transition; absent means active or unproven. */
   inactiveSinceMs?: number;
+  /** Instance id of the last current Thread record on this target; liveness evidence only. */
+  lastOwnerInstanceId?: string;
   updatedAtMs: number;
 }
 
@@ -564,6 +566,14 @@ export interface TelegramTopicTargetStore {
     inactiveSinceMs?: number,
   ) => boolean;
   markWorkspaceBindingActiveByTarget: (target: TelegramTarget) => boolean;
+  /**
+   * Stamp first inactivity on unprotected bindings without a current owner record whose known
+   * owners (last owner, else a complete non-empty journal-key set) are all proven dead.
+   */
+  markOwnerlessWorkspaceBindingsInactive: (input: {
+    isOwnerDead: (instanceId: string) => boolean;
+    isTargetRegistered: (target: TelegramTarget) => boolean;
+  }) => string[];
   getWorkspaceBinding: (
     cwd: string,
     instanceSlot?: string,
@@ -1316,6 +1326,10 @@ function normalizeWorkspaceBindingRecord(
     ...(journalBindingKeys ? { journalBindingKeys } : {}),
     ...(record.journalBindingsComplete === true && journalBindingKeys
       ? { journalBindingsComplete: true as const }
+      : {}),
+    ...(typeof record.lastOwnerInstanceId === "string" &&
+      record.lastOwnerInstanceId.length > 0 && record.lastOwnerInstanceId.length <= 512
+      ? { lastOwnerInstanceId: record.lastOwnerInstanceId }
       : {}),
     target: { chatId: target.chatId, threadId: target.threadId },
     ...(threadName ? { threadName } : {}),
@@ -2190,6 +2204,53 @@ export function createTelegramTopicTargetStore(
     return false;
   };
 
+  /** Local operations or current records that keep a binding's target or letter in use. */
+  const isWorkspaceBindingLocallyProtected = (
+    binding: TelegramWorkspaceThreadBinding,
+    nowMs: number,
+    expectedRetirement?: TelegramWorkspaceRetirementIntent,
+  ): boolean => {
+    const targetOrSlotMatches = (candidate: {
+      target?: TelegramTarget;
+      slot?: string;
+    }) =>
+      (candidate.target && targetMatches(candidate.target, binding.target)) ||
+      (!!binding.slot && candidate.slot === binding.slot);
+    return Array.from(records.values()).some((record) =>
+        isCurrentThreadRecord(record) && targetOrSlotMatches(record),
+      ) ||
+      Array.from(workspaceClaims.values()).some((claim) =>
+        claim.identity.bindingKey === binding.bindingKey ||
+        (!!binding.slot && claim.identity.slot === binding.slot),
+      ) ||
+      reservations.some((reservation) =>
+        (reservation.expiresAtMs === undefined || reservation.expiresAtMs > nowMs) &&
+        targetOrSlotMatches(reservation),
+      ) ||
+      pendingProvisions.some((provision) =>
+        isPendingProvisionLiveOrTargeted(provision, nowMs) &&
+        targetOrSlotMatches(provision),
+      ) ||
+      pendingCleanups.some((intent) => targetOrSlotMatches(intent)) ||
+      workspaceRetirements.some((intent) =>
+        !isDeepStrictEqual(intent, expectedRetirement) &&
+        (intent.binding.bindingKey === binding.bindingKey ||
+          targetOrSlotMatches(intent.binding)),
+      );
+  };
+
+  /** Record the current owner on its bound target; skipped while retirement owns the binding. */
+  const rememberWorkspaceBindingOwner = (record: TelegramTopicTargetRecord): void => {
+    if (!record.instanceId || !isCurrentThreadRecord(record) ||
+        workspaceRetirementCommitInFlight || hasWorkspaceRetirementConflict({ target: record.target })) return;
+    for (const [key, binding] of workspaceBindings) {
+      if (!targetMatches(binding.target, record.target) ||
+          binding.lastOwnerInstanceId === record.instanceId) continue;
+      workspaceBindings.set(key, { ...binding, lastOwnerInstanceId: record.instanceId });
+      markDirty();
+    }
+  };
+
   const persistSnapshot = (transition?: {
     target: TelegramTarget;
     isCurrent: () => boolean;
@@ -2621,7 +2682,7 @@ export function createTelegramTopicTargetStore(
         return cloneWorkspaceBinding(current);
       }
       const next = { ...current, updatedAtMs: getNowMs() };
-      if (keys.length) next.journalBindingKeys = keys;
+      if (keys.length || complete) next.journalBindingKeys = keys;
       else delete next.journalBindingKeys;
       if (complete) next.journalBindingsComplete = true;
       else delete next.journalBindingsComplete;
@@ -2858,34 +2919,9 @@ export function createTelegramTopicTargetStore(
       const nowMs = getNowMs();
       const bindings = Array.from(workspaceBindings.values()).map((binding) => {
         const slot = binding.slot?.toLowerCase() ?? "";
-        const targetOrSlotMatches = (candidate: {
-          target?: TelegramTarget;
-          slot?: string;
-        }) =>
-          (candidate.target && targetMatches(candidate.target, binding.target)) ||
-          (!!binding.slot && candidate.slot === binding.slot);
-        const locallyProtected =
-          Array.from(records.values()).some((record) =>
-            isCurrentThreadRecord(record) && targetOrSlotMatches(record),
-          ) ||
-          Array.from(workspaceClaims.values()).some((claim) =>
-            claim.identity.bindingKey === binding.bindingKey ||
-            (!!binding.slot && claim.identity.slot === binding.slot),
-          ) ||
-          reservations.some((reservation) =>
-            (reservation.expiresAtMs === undefined || reservation.expiresAtMs > nowMs) &&
-            targetOrSlotMatches(reservation),
-          ) ||
-          pendingProvisions.some((provision) =>
-            isPendingProvisionLiveOrTargeted(provision, nowMs) &&
-            targetOrSlotMatches(provision),
-          ) ||
-          pendingCleanups.some((intent) => targetOrSlotMatches(intent)) ||
-          workspaceRetirements.some((intent) =>
-            !isDeepStrictEqual(intent, options?.expectedRetirement) &&
-            (intent.binding.bindingKey === binding.bindingKey ||
-              targetOrSlotMatches(intent.binding)),
-          );
+        const locallyProtected = isWorkspaceBindingLocallyProtected(
+          binding, nowMs, options?.expectedRetirement,
+        );
         const externalProtection = getExternalProtection(cloneWorkspaceBinding(binding));
         const externalStates = [
           externalProtection.liveOwner,
@@ -2955,6 +2991,30 @@ export function createTelegramTopicTargetStore(
       return true;
     },
     markWorkspaceBindingInactiveByTarget,
+    markOwnerlessWorkspaceBindingsInactive({ isOwnerDead, isTargetRegistered }) {
+      if (workspaceRetirementCommitInFlight) return [];
+      const nowMs = getNowMs();
+      const stamped: string[] = [];
+      for (const [key, binding] of workspaceBindings) {
+        if (binding.inactiveSinceMs !== undefined || !binding.slot ||
+            isWorkspaceBindingLocallyProtected(binding, nowMs) ||
+            isTargetRegistered(binding.target)) continue;
+        // Without a recorded last owner, only a complete follower key set names every owner.
+        const owners = binding.lastOwnerInstanceId
+          ? [binding.lastOwnerInstanceId]
+          : binding.journalBindingsComplete
+            ? (binding.journalBindingKeys ?? []).map((journalKey) => {
+                const owner = getTelegramThreadOwnerFromProfileKey(journalKey);
+                return owner.kind === "manual-follower" ? owner.instanceId : undefined;
+              })
+            : [];
+        if (!owners.length || !owners.every((owner) => !!owner && isOwnerDead(owner))) continue;
+        workspaceBindings.set(key, { ...binding, inactiveSinceMs: nowMs });
+        stamped.push(binding.slot);
+      }
+      if (stamped.length) markDirty();
+      return stamped;
+    },
     markWorkspaceBindingActiveByTarget(target) {
       if (hasWorkspaceRetirementConflict({ target })) return false;
       for (const [key, binding] of workspaceBindings) {
@@ -3295,18 +3355,28 @@ export function createTelegramTopicTargetStore(
           ...(previous.journalBindingKeys ?? []),
           ...(next.journalBindingKeys ?? []),
         ]));
-        if (journalBindingKeys.length) next.journalBindingKeys = journalBindingKeys;
-        else delete next.journalBindingKeys;
+        // Normalization reads completeness only beside a key array, so a complete
+        // empty set must persist as [] or the binding turns legacy on reload.
+        if (journalBindingKeys.length || previous.journalBindingsComplete) {
+          next.journalBindingKeys = journalBindingKeys;
+        } else delete next.journalBindingKeys;
         if (previous.journalBindingsComplete) next.journalBindingsComplete = true;
         else delete next.journalBindingsComplete;
       }
       if (previous && !targetMatches(previous.target, next.target)) {
         delete next.displayTitle;
         delete next.inactiveSinceMs;
+        delete next.lastOwnerInstanceId;
       } else if (previous) {
         if (previous.displayTitle) next.displayTitle = previous.displayTitle;
         if (previous.inactiveSinceMs !== undefined) next.inactiveSinceMs = previous.inactiveSinceMs;
+        if (previous.lastOwnerInstanceId && !next.lastOwnerInstanceId) {
+          next.lastOwnerInstanceId = previous.lastOwnerInstanceId;
+        }
       }
+      const currentOwner = Array.from(records.values()).find((record) =>
+        !!record.instanceId && isCurrentThreadRecord(record) && targetMatches(record.target, next.target));
+      if (currentOwner) next.lastOwnerInstanceId = currentOwner.instanceId;
       if (claimInstanceId) {
         if (claim?.instanceId !== claimInstanceId) return undefined;
         if (next.slot !== undefined && claim.identity.slot !== next.slot) return undefined;
@@ -3358,6 +3428,7 @@ export function createTelegramTopicTargetStore(
         return cloneRecord(next);
       }
       records.set(nextOwnerKey, next);
+      rememberWorkspaceBindingOwner(next);
       if (
         !previousRecord ||
         !targetMatches(previousRecord.target, next.target)

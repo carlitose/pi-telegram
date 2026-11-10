@@ -148,6 +148,8 @@ export interface TelegramWorkspaceThreadBinding {
     showSlotSuffix?: boolean;
     /** First continuously proven no-owner transition; absent means active or unproven. */
     inactiveSinceMs?: number;
+    /** Instance id of the last current Thread record on this target; liveness evidence only. */
+    lastOwnerInstanceId?: string;
     updatedAtMs: number;
 }
 export type TelegramWorkspaceDisplayBinding = Pick<TelegramWorkspaceThreadBinding, "bindingKey" | "cwd" | "slot" | "threadName" | "manualThreadName" | "showSlotSuffix">;
@@ -283,6 +285,14 @@ export interface TelegramTopicTargetStore {
     setWorkspaceDisplayTitle: (expected: TelegramWorkspaceThreadBinding, title: string) => boolean;
     markWorkspaceBindingInactiveByTarget: (target: TelegramTarget, inactiveSinceMs?: number) => boolean;
     markWorkspaceBindingActiveByTarget: (target: TelegramTarget) => boolean;
+    /**
+     * Stamp first inactivity on unprotected bindings without a current owner record whose known
+     * owners (last owner, else a complete non-empty journal-key set) are all proven dead.
+     */
+    markOwnerlessWorkspaceBindingsInactive: (input: {
+        isOwnerDead: (instanceId: string) => boolean;
+        isTargetRegistered: (target: TelegramTarget) => boolean;
+    }) => string[];
     getWorkspaceBinding: (cwd: string, instanceSlot?: string, sessionId?: string) => TelegramWorkspaceThreadBinding | undefined;
     claimWorkspaceIdentity: (cwd: string, instanceId: string, previousInstanceId?: string, options?: {
         existingBindingOnly?: boolean;

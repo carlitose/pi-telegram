@@ -39,6 +39,11 @@ export declare function getTelegramProcessLiveness(owner: {
     processBirthId: string;
 }, options?: TelegramProcessLivenessOptions): TelegramProcessLiveness;
 export declare function getTelegramProcessBirthIdentityLiveness(processBirthId: string, options?: TelegramProcessLivenessOptions): TelegramProcessLiveness;
+/**
+ * Liveness of a persisted Thread-record owner. Leader ids (`PID:createdAtMs`) carry no
+ * birth proof, so only an absent PID proves death and a present one stays unverifiable.
+ */
+export declare function getTelegramOwnerInstanceLiveness(instanceId: string, options?: TelegramProcessLivenessOptions): TelegramProcessLiveness;
 export declare function createCurrentTelegramBusProcessRuntime(input: {
     getActiveProfileName: () => string | undefined;
     pid?: number;

@@ -279,6 +279,8 @@ export interface TelegramWorkspaceSlotRotationPorts extends TelegramWorkspaceOpe
     getAdmission: () => TelegramWorkspaceAdmissionLedger | undefined;
     deleteThread: TelegramWorkspaceThreadDeletionTransport;
     reclaimDeadOwnerQueuedWork?: (binding: TelegramWorkspaceThreadBinding, isCurrent: () => boolean) => Promise<TelegramWorkspaceDeadQueueReclamation>;
+    /** Non-destructively detach persisted owners proven dead; returns the reconciled count. */
+    reconcileDeadOwners?: (isCurrent: () => boolean) => Promise<number>;
 }
 /** Retry allocation once, only after the failed operation released all ordinary leases. */
 export declare function createTelegramWorkspaceSlotRotation(input: TelegramWorkspaceSlotRotationPorts & {

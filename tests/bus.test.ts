@@ -48,6 +48,7 @@ import {
   getTelegramBusSocketPath,
   getTelegramFollowerTargetOwnership,
   getTelegramProcessBirthIdentity,
+  getTelegramOwnerInstanceLiveness,
   getTelegramProcessBirthIdentityLiveness,
   getTelegramProcessLiveness,
   hasTelegramBusCapability,
@@ -362,6 +363,18 @@ test("Process birth identity liveness fails closed for opaque and live fallback 
   assert.equal(getTelegramProcessBirthIdentityLiveness("42:start:12345", {
     ...options, isProcessAlive: () => false,
   }), "dead");
+});
+
+test("Persisted owner liveness proves death only from an absent PID", () => {
+  const dead = { isProcessAlive: () => false };
+  const present = { isProcessAlive: () => true };
+  assert.equal(getTelegramOwnerInstanceLiveness("23364:1793956600378", dead), "dead");
+  assert.equal(getTelegramOwnerInstanceLiveness("23364:1793956600378", present), "unverifiable");
+  assert.equal(getTelegramOwnerInstanceLiveness("33504:generation:1790238441835", dead), "dead");
+  assert.equal(getTelegramOwnerInstanceLiveness("33504:generation:1790238441835", present), "unverifiable");
+  for (const opaque of ["leader", "0:1", "-1:2", "12:ab", ""]) {
+    assert.equal(getTelegramOwnerInstanceLiveness(opaque, dead), "unverifiable", opaque);
+  }
 });
 
 test("Process birth identity preserves Linux start ticks and fallback", () => {

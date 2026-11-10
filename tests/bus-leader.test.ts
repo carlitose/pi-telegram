@@ -4,6 +4,7 @@
  */
 
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -35,6 +36,7 @@ import {
   createTelegramBusLeaderRuntime as createRawTelegramBusLeaderRuntime,
   createTelegramBusLeaderRuntimeAssembly,
   createTelegramBusLeaderTargetProvisioner,
+  createTelegramDeadPersistedOwnerReconciler,
   TELEGRAM_BUS_FOLLOWER_STALE_AFTER_MS,
   type TelegramBusLeaderRuntimeDeps,
 } from "../lib/bus-leader.ts";
@@ -1068,6 +1070,7 @@ test(`Confirmed-dead cleanup preserves Workspace identity despite registration n
       threadName: "Cedar",
       slot: "C",
       inactiveSinceMs: 1000,
+      lastOwnerInstanceId: "follower-dead",
       updatedAtMs: 500,
     });
 
@@ -4052,6 +4055,135 @@ test("Bus leader authorizes scoped follower API calls", async () => {
   ]);
 });
 
+test("Dead persisted owner reconciliation detaches only proven-dead unregistered owners", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-telegram-dead-owners-"));
+  try {
+    const path = join(dir, "state.json");
+    const store = createTelegramTopicTargetStore({ path, getNowMs: () => 5000 });
+    const owners = [
+      ["A", "leader:9001:1", "9001:1"], // dead leader
+      ["B", "manual:9002:generation:5", "9002:generation:5"], // dead follower
+      ["C", "leader:self", "self"], // this runtime
+      ["D", "manual:9004:generation:1", "9004:generation:1"], // registered follower
+      ["E", "leader:9005:1", "9005:1"], // PID present
+      ["F", "manual:9006:start:7", "9006:start:7"], // alive birth identity
+      ["G", "manual:9007:generation:2", "9007:generation:2"], // dead, no binding
+      ["H", "manual:9008:generation:3", "9008:generation:3"], // target re-registered
+    ] as const;
+    owners.forEach(([slot, profileKey, instanceId], index) => {
+      const target = { chatId: 7, threadId: 40 + index };
+      store.upsert({ profileKey, instanceId, target, status: "active", slot, createdAtMs: 1, updatedAtMs: 1 });
+      if (slot !== "G") {
+        store.upsertWorkspaceBinding({ ...createTelegramWorkspaceBindingIdentity(`/repo/${slot}`, 0, "s")!,
+          target, slot, journalBindingKeys: [], journalBindingsComplete: true, updatedAtMs: 1 });
+      }
+    });
+    // Ownerless bindings: I's last owner is gone, J's last owner PID is still present.
+    for (const [slot, threadId, lastOwnerInstanceId] of [["I", 48, "9009:generation:1"],
+      ["J", 49, "9005:1"]] as const) {
+      store.upsertWorkspaceBinding({ ...createTelegramWorkspaceBindingIdentity(`/repo/${slot}`, 0, "s")!,
+        target: { chatId: 7, threadId }, slot, lastOwnerInstanceId, updatedAtMs: 1 });
+    }
+    await store.persist();
+    const liveness: Record<string, "dead" | "alive" | "unverifiable"> = {
+      "9009:generation:1": "dead",
+      "9001:1": "dead", "9002:generation:5": "dead", "9004:generation:1": "dead",
+      "9005:1": "unverifiable", "9006:start:7": "alive", "9007:generation:2": "dead",
+      "9008:generation:3": "dead",
+    };
+    const consulted: string[] = [];
+    const operations: string[] = [];
+    const events: Record<string, unknown>[] = [];
+    let epoch: number | undefined = 1;
+    let profile = "default";
+    const createReconciler = (getOwnerLiveness = (instanceId: string) => {
+      consulted.push(instanceId);
+      return liveness[instanceId] ?? "unverifiable";
+    }) => createTelegramDeadPersistedOwnerReconciler({
+      instanceId: "self", topicTargetStore: store,
+      listFollowers: () => [{ instanceId: "9004:generation:1" },
+        { instanceId: "9008:generation:4", target: { chatId: 7, threadId: 47 } }],
+      getOwnerLiveness, getCurrentLeaderEpoch: () => epoch, getTelegramProfile: () => profile,
+      async runWorkspaceOperation(input, operation) {
+        operations.push(`${input.operationKind}:${input.scopes.map((scope) => scope.kind).join(",")}`);
+        return operation();
+      },
+      recordRuntimeEvent(_category, _message, details) { events.push(details ?? {}); },
+    });
+    assert.equal(await createReconciler()(), 4);
+    assert.deepEqual(operations, ["workspace.reconcile-dead-owners:profile"]);
+    assert.deepEqual(consulted.sort(), ["9001:1", "9002:generation:5", "9005:1", "9006:start:7",
+      "9007:generation:2", "9009:generation:1"]);
+    assert.deepEqual(events.map((event) => [event.phase, event.slot]).sort(), [
+      ["dead-owner-detached", "A"], ["dead-owner-detached", "B"], ["dead-owner-detached", "G"],
+      ["ownerless-binding-inactive", "I"],
+    ]);
+    const restored = createTelegramTopicTargetStore({ path });
+    await restored.load();
+    assert.deepEqual(restored.list().map((record) => record.slot).sort(), ["C", "D", "E", "F", "H"]);
+    assert.deepEqual(Object.fromEntries(restored.listWorkspaceBindings()
+      .map((binding) => [binding.slot, binding.inactiveSinceMs])),
+    { A: 5000, B: 5000, C: undefined, D: undefined, E: undefined, F: undefined, H: undefined,
+      I: 5000, J: undefined });
+    assert.equal(restored.listSyncObservations().length, 0, "detachment is not Thread absence");
+
+    // Lost leader epoch, a profile change, or a missing epoch end reconciliation without effects.
+    store.upsert({ profileKey: "leader:9011:1", instanceId: "9011:1",
+      target: { chatId: 7, threadId: 40 }, status: "active", slot: "A", createdAtMs: 2, updatedAtMs: 2 });
+    await store.persist();
+    const owned = () => store.list().map((record) => `${record.slot}:${record.instanceId}`).sort();
+    const before = owned();
+    assert.equal(await createReconciler(() => { epoch = 2; return "dead"; })(), 0);
+    assert.deepEqual(owned(), before);
+    assert.equal(await createReconciler(() => { profile = "other"; return "dead"; })(), 0);
+    epoch = undefined;
+    assert.equal(await createReconciler()(), 0);
+    assert.deepEqual(owned(), before);
+    assert.ok(before.includes("A:9011:1"));
+    assert.equal(store.getWorkspaceBinding("/repo/A", "a", "s")?.inactiveSinceMs, 5000);
+    assert.equal(events.length, 4);
+    assert.equal(operations.length, 3, "a missing epoch never takes Workspace admission");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Dead persisted owner reconciliation resumes a lost admission acknowledgement without leaking its lease", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-telegram-dead-owner-admission-"));
+  try {
+    const admission = createTelegramWorkspaceAdmissionLedger({ path: join(dir, "admission.json"),
+      profileKey: "default", owner: { processId: process.pid, processBirthId: `${process.pid}:dead-owner` },
+      getProcessLiveness: () => "alive" });
+    let lost = 0;
+    const operations = createTelegramWorkspaceOperationRuntime({ getWorkspaceAdmission: () => ({
+      ...admission,
+      acquireAdmission(input) {
+        const result = admission.acquireAdmission(input);
+        if (lost++ === 0) throw new Error("admission acknowledgement lost");
+        return result;
+      },
+    }) });
+    const store = createTelegramTopicTargetStore({ path: join(dir, "state.json"), getNowMs: () => 5000 });
+    const target = { chatId: 7, threadId: 40 };
+    store.upsert({ profileKey: "leader:9001:1", instanceId: "9001:1", target, status: "active",
+      slot: "A", createdAtMs: 1, updatedAtMs: 1 });
+    store.upsertWorkspaceBinding({ ...createTelegramWorkspaceBindingIdentity("/repo/A")!,
+      target, slot: "A", journalBindingKeys: [], journalBindingsComplete: true, updatedAtMs: 1 });
+    await store.persist();
+    const reconcile = createTelegramDeadPersistedOwnerReconciler({
+      instanceId: "self", topicTargetStore: store, listFollowers: () => [],
+      getOwnerLiveness: () => "dead", getCurrentLeaderEpoch: () => 1, getTelegramProfile: () => "default",
+      runWorkspaceOperation: operations.run, recordRuntimeEvent() {},
+    });
+    assert.equal(await reconcile(), 1);
+    assert.equal(lost, 2, "the retry reuses the exact operation and resumes its lease");
+    assert.deepEqual(admission.read().leases, []);
+    assert.equal(store.getWorkspaceBinding("/repo/A")?.inactiveSinceMs, 5000);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("Bus leader assembly wires provisioners, reconciliation, API, and runtime", async () => {
   const dir = mkdtempSync(join(tmpdir(), "pi-telegram-leader-assembly-"));
   const socketPath = join(dir, "bus.sock");
@@ -4450,6 +4582,87 @@ test("Workspace rotation integrates leader and follower allocation without bypas
         rmSync(dir, { recursive: true, force: true });
       }
     });
+  }
+});
+
+test("Leader startup detaches dead persisted owners so one allocation rotates their letters", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-telegram-dead-owner-rotation-"));
+  const socketPath = join(dir, "bus.sock");
+  // An exited child yields a PID that is absent for this test's duration.
+  const deadPid = spawnSync(process.execPath, ["-e", ""]).pid;
+  const admission = createTelegramWorkspaceAdmissionLedger({
+    path: join(dir, "admission.json"), profileKey: "default",
+    owner: { processId: process.pid, processBirthId: `${process.pid}:dead-owner-rotation` },
+    getProcessLiveness: () => "alive",
+  });
+  const operations = createTelegramWorkspaceOperationRuntime({ getWorkspaceAdmission: () => admission });
+  const store = createTelegramTopicTargetStore({ path: join(dir, "state.json"),
+    getExternalReservedSlots: admission.listReservedSlots });
+  for (let index = 0; index < 26; index++) {
+    const slot = String.fromCharCode(65 + index);
+    const target = { chatId: 7, threadId: 100 + index };
+    const follower = index % 2 === 1;
+    const instanceId = follower ? `${deadPid}:generation:${index}` : `${deadPid}:${index}`;
+    store.upsert({ profileKey: `${follower ? "manual" : "leader"}:${instanceId}`, instanceId, target,
+      status: "active", slot, createdAtMs: 1, updatedAtMs: 1 });
+    store.upsertWorkspaceBinding({
+      ...createTelegramWorkspaceBindingIdentity(`/old/${index}`, 0, "old-session")!,
+      target, slot, journalBindingKeys: [], journalBindingsComplete: true, updatedAtMs: 1,
+    });
+  }
+  await store.persist();
+  let allowedUserId: number | undefined;
+  const effects: string[] = [];
+  let detachedCount = 0;
+  let allDetached!: () => void;
+  const detached = new Promise<void>((resolve) => { allDetached = resolve; });
+  const runtime = createTelegramBusLeaderRuntimeAssembly({
+    runtime: { socketPath, followerRegistry: createTelegramBusFollowerRegistry(),
+      protocolIdentity: TEST_BUS_PROTOCOL_IDENTITY, followerStaleAfterMs: 25,
+      startPolling() {}, stopPolling() {} },
+    getAllowedUserId: () => allowedUserId, instanceId: "leader",
+    getCwd: () => undefined, getSessionId: () => "fresh-session",
+    topicTargetStore: store, getCurrentLeaderEpoch: () => 1,
+    getWorkspaceAdmission: () => admission, runWorkspaceOperation: operations.run,
+    captureWorkspaceExternalProtection: () => ({ liveOwner: "clear", acceptedWork: "clear",
+      deliveryAuthority: "clear" }),
+    workspaceRotation: {
+      getAdmission: () => admission, runExclusive: operations.runExclusive,
+      async deleteThread(authorize) { effects.push(`delete:${authorize().threadId}`); },
+    },
+    async callApi<TResponse>(method: string) {
+      if (method !== "createForumTopic") return true as TResponse;
+      effects.push("create");
+      return { message_thread_id: 1000 } as TResponse;
+    },
+    callMultipart: async () => true, downloadFile: async () => undefined,
+    getSyncState: () => ({}), setSyncState() {}, setLeaderTarget() {},
+    recordRuntimeEvent(_category, _message, details) {
+      if (details?.phase === "dead-owner-detached" && ++detachedCount === 26) allDetached();
+    },
+  });
+  try {
+    await runtime.startPolling("ctx");
+    await Promise.race([detached, new Promise((_resolve, reject) => {
+      setTimeout(() => reject(new Error(`only ${detachedCount} dead owners detached`)), 10_000).unref();
+    })]);
+    assert.deepEqual(effects, [], "startup detachment never calls Telegram");
+    assert.equal(store.list().length, 0);
+    assert.ok(store.listWorkspaceBindings().every((binding) => binding.inactiveSinceMs !== undefined));
+    assert.deepEqual(store.listSyncObservations(), []);
+    allowedUserId = 7;
+    const response = await sendTelegramBusLocalEnvelope({ socketPath, timeoutMs: 10_000, envelope: {
+      kind: "follower.register", requestId: "register:fresh",
+      registration: { instanceId: "fresh", cwd: "/fresh", sessionId: "fresh-session",
+        registrationGeneration: "fresh:1", connectedAtMs: 1, protocol: TEST_BUS_PROTOCOL_IDENTITY },
+    } });
+    assert.equal(response?.kind === "bus.ack" && response.ok, true, JSON.stringify(response));
+    assert.deepEqual(effects, ["delete:100", "create"]);
+    assert.equal(store.getWorkspaceBinding("/fresh", "a", "fresh-session")?.slot, "A");
+    assert.equal(store.listWorkspaceBindings().length, 26);
+  } finally {
+    await runtime.stopPolling();
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

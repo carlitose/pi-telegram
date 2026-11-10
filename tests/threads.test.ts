@@ -166,8 +166,10 @@ test("Owner detachment publishes inactivity only with an exact fenced durable co
         assert.equal(await store.detachTargetOwner(expected, () => current), race === "none");
       }
       const committed = race === "none" || race === "ack";
+      // A replacement owner on the same target is recorded as the binding's last owner.
       assert.deepEqual(store.listWorkspaceBindings(), [{ ...binding,
-        ...(committed ? { inactiveSinceMs: 1000 } : {}) }]);
+        ...(committed ? { inactiveSinceMs: 1000 } : {}),
+        lastOwnerInstanceId: race === "replacement" ? "new" : "old" }]);
       assert.deepEqual(store.listSyncObservations(), [], "detachment is not Thread absence");
       const disk = JSON.parse(await readFile(path, "utf8"));
       assert.equal(disk.threads.length, committed ? 0 : 1);
@@ -827,6 +829,132 @@ test("Workspace journal keys accumulate while legacy completeness cannot be inve
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("Workspace binding keeps a complete empty journal-key set across upserts and reloads", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-telegram-workspace-empty-keys-"));
+  const path = join(dir, "state.json");
+  try {
+    const leader = { ...createTelegramWorkspaceBindingIdentity("/leader")!,
+      target: { chatId: 7, threadId: 41 }, slot: "A", threadName: "Anchor",
+      journalBindingKeys: [] as string[], journalBindingsComplete: true as const, updatedAtMs: 1 };
+    const legacy = { ...createTelegramWorkspaceBindingIdentity("/legacy")!,
+      target: { chatId: 7, threadId: 42 }, slot: "B", threadName: "Briar", updatedAtMs: 1 };
+    const first = createTelegramTopicTargetStore({ path });
+    first.upsertWorkspaceBinding(leader);
+    first.upsertWorkspaceBinding(legacy);
+    await first.persist();
+    const second = createTelegramTopicTargetStore({ path });
+    await second.load();
+    // A recovered leader binding is upserted again on every leader start.
+    second.upsertWorkspaceBinding({ ...leader, updatedAtMs: 2 });
+    second.upsertWorkspaceBinding({ ...legacy, journalBindingKeys: [],
+      journalBindingsComplete: true, updatedAtMs: 2 });
+    await second.persist();
+    const restored = createTelegramTopicTargetStore({ path });
+    await restored.load();
+    assert.deepEqual(restored.getWorkspaceBinding("/leader")?.journalBindingKeys, []);
+    assert.equal(restored.getWorkspaceBinding("/leader")?.journalBindingsComplete, true);
+    assert.equal(restored.getWorkspaceBinding("/legacy")?.journalBindingsComplete, undefined);
+    // Pruning the last known follower key keeps the complete empty set durable.
+    const follower = { ...createTelegramWorkspaceBindingIdentity("/follower")!,
+      target: { chatId: 7, threadId: 43 }, slot: "C", threadName: "Cedar",
+      journalBindingKeys: ["manual:gone"], journalBindingsComplete: true as const, updatedAtMs: 1 };
+    const committed = restored.upsertWorkspaceBinding(follower)!;
+    assert.ok(restored.commitWorkspaceJournalEvidence(committed, [], true));
+    await restored.persist();
+    const pruned = createTelegramTopicTargetStore({ path });
+    await pruned.load();
+    assert.deepEqual(pruned.getWorkspaceBinding("/follower")?.journalBindingKeys, []);
+    assert.equal(pruned.getWorkspaceBinding("/follower")?.journalBindingsComplete, true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Workspace bindings remember their last owner across record order, reloads and target replacement", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-telegram-workspace-last-owner-"));
+  const path = join(dir, "state.json");
+  try {
+    const store = createTelegramTopicTargetStore({ path });
+    const first = { chatId: 7, threadId: 41 };
+    const second = { chatId: 7, threadId: 42 };
+    // Binding first, then its owner record.
+    store.upsertWorkspaceBinding({ ...createTelegramWorkspaceBindingIdentity("/binding-first")!,
+      target: first, slot: "A", updatedAtMs: 1 });
+    store.upsert({ profileKey: "manual:one", instanceId: "one", target: first,
+      status: "active", slot: "A", createdAtMs: 1, updatedAtMs: 1 });
+    // Owner record first, then its binding.
+    store.upsert({ profileKey: "manual:two", instanceId: "two", target: second,
+      status: "active", slot: "B", createdAtMs: 1, updatedAtMs: 1 });
+    store.upsertWorkspaceBinding({ ...createTelegramWorkspaceBindingIdentity("/record-first")!,
+      target: second, slot: "B", updatedAtMs: 1 });
+    await store.persist();
+    const restored = createTelegramTopicTargetStore({ path });
+    await restored.load();
+    assert.equal(restored.getWorkspaceBinding("/binding-first")?.lastOwnerInstanceId, "one");
+    assert.equal(restored.getWorkspaceBinding("/record-first")?.lastOwnerInstanceId, "two");
+    // A stale same-target upsert keeps the owner; a target replacement drops it.
+    const kept = restored.getWorkspaceBinding("/binding-first")!;
+    restored.markOfflineByInstanceId("one");
+    const { lastOwnerInstanceId: _owner, ...withoutOwner } = kept;
+    assert.equal(restored.upsertWorkspaceBinding({ ...withoutOwner, updatedAtMs: 2 })
+      ?.lastOwnerInstanceId, "one");
+    assert.equal(restored.upsertWorkspaceBinding({ ...kept, target: { chatId: 7, threadId: 43 },
+      updatedAtMs: 3 })?.lastOwnerInstanceId, undefined);
+    const file = JSON.parse(await readFile(path, "utf8"));
+    file.workspaceBindings[1].lastOwnerInstanceId = 5;
+    await writeFile(path, JSON.stringify(file));
+    const malformed = createTelegramTopicTargetStore({ path });
+    await malformed.load();
+    assert.equal(malformed.getWorkspaceBinding("/record-first")?.lastOwnerInstanceId, undefined);
+    assert.ok(malformed.getWorkspaceBinding("/record-first"), "a malformed owner keeps the binding");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("Ownerless Workspace bindings become inactive only when every known owner is proven dead", () => {
+  let nowMs = 1000;
+  const store = createTelegramTopicTargetStore({ path: "/unused/state.json", getNowMs: () => nowMs });
+  const bind = (cwd: string, slot: string, threadId: number, extra: Record<string, unknown> = {}) =>
+    store.upsertWorkspaceBinding({ ...createTelegramWorkspaceBindingIdentity(cwd)!,
+      target: { chatId: 7, threadId }, slot, updatedAtMs: 1, ...extra });
+  // A: record dropped by a non-deleted stale observation; its last owner is the evidence.
+  bind("/stale", "A", 41);
+  store.upsert({ profileKey: "manual:stale-owner", instanceId: "stale-owner",
+    target: { chatId: 7, threadId: 41 }, status: "active", slot: "A", createdAtMs: 1, updatedAtMs: 1 });
+  store.markStaleByTarget({ chatId: 7, threadId: 41 }, "unknown");
+  // B: legacy, complete non-empty follower keys. C: complete but empty. D: incomplete keys.
+  bind("/complete", "B", 42, { journalBindingKeys: ["manual:key-one", "profile:default:manual:key-two"],
+    journalBindingsComplete: true });
+  bind("/empty", "C", 43, { journalBindingKeys: [], journalBindingsComplete: true });
+  bind("/incomplete", "D", 44, { journalBindingKeys: ["manual:key-one"] });
+  // E: dead last owner, but its target is registered again. F: still has a current record.
+  bind("/registered", "E", 45, { lastOwnerInstanceId: "stale-owner" });
+  bind("/live-record", "F", 46);
+  store.upsert({ profileKey: "manual:live", instanceId: "live", target: { chatId: 7, threadId: 46 },
+    status: "active", slot: "F", createdAtMs: 1, updatedAtMs: 1 });
+  assert.equal(store.list().length, 1);
+  const dead = new Set(["stale-owner", "key-one", "key-two", "live"]);
+  const mark = () => store.markOwnerlessWorkspaceBindingsInactive({
+    isOwnerDead: (instanceId) => dead.has(instanceId),
+    isTargetRegistered: (target) => target.threadId === 45,
+  });
+  dead.delete("stale-owner");
+  dead.delete("key-two");
+  assert.deepEqual(mark(), [], "alive or unverifiable owners keep every binding unproven");
+  dead.add("stale-owner");
+  dead.add("key-two");
+  assert.deepEqual(mark().sort(), ["A", "B"]);
+  const inactivity = () => Object.fromEntries(store.listWorkspaceBindings()
+    .map((binding) => [binding.slot, binding.inactiveSinceMs]));
+  assert.deepEqual(inactivity(), { A: 1000, B: 1000, C: undefined, D: undefined, E: undefined,
+    F: undefined });
+  nowMs = 2000;
+  assert.deepEqual(mark(), [], "the first proven inactivity is kept");
+  assert.equal(store.markWorkspaceBindingActiveByTarget({ chatId: 7, threadId: 41 }), true);
+  assert.equal(store.getWorkspaceBinding("/stale")?.inactiveSinceMs, undefined);
 });
 
 test("Workspace occupancy snapshot fails closed across local operations and external work authority", () => {

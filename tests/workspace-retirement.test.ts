@@ -617,6 +617,66 @@ test("Pressure rotation reclaims exact queued custody only after native dead-own
   }
 });
 
+test("Pressure rotation reconciles dead persisted owners before choosing a retirement", async (t) => {
+  for (const scenario of ["detached", "reconciliation-failed"] as const) {
+    await t.test(scenario, async () => {
+      const dir = await realpath(await mkdtemp(join(tmpdir(), "pi-telegram-dead-owner-pressure-")));
+      try {
+        const admission = createRetirementAdmission(join(dir, "admission.json"));
+        const store = createTelegramTopicTargetStore({ path: join(dir, "state.json"),
+          getExternalReservedSlots: admission.listReservedSlots });
+        for (let index = 0; index < 26; index++) {
+          const slot = String.fromCharCode("A".charCodeAt(0) + index);
+          const target = { chatId: 7, threadId: 40 + index };
+          store.upsert({ profileKey: `manual:dead-${index}`, instanceId: `dead-${index}`, target,
+            status: "active", slot, createdAtMs: 1, updatedAtMs: 1 });
+          store.upsertWorkspaceBinding({ ...createTelegramWorkspaceBindingIdentity(`/repo/${index}`)!,
+            target, slot, threadName: `Workspace${index}`, journalBindingKeys: [],
+            journalBindingsComplete: true, updatedAtMs: 100 });
+        }
+        await store.persist();
+        const calls: string[] = [];
+        const events: string[] = [];
+        const operations = createTelegramWorkspaceOperationRuntime({ getWorkspaceAdmission: () => admission });
+        const rotation = createTelegramWorkspaceSlotRotation({
+          store, getAdmission: () => admission, getLeaderEpoch: () => 1,
+          runExclusive: operations.runExclusive, getExternalProtection: clearExternalProtection,
+          recordEvent(message) { events.push(message); },
+          async reconcileDeadOwners(isCurrent) {
+            calls.push("reconcile");
+            if (scenario === "reconciliation-failed") throw new Error("admission busy");
+            let detached = 0;
+            for (const record of store.list()) {
+              if (await store.detachTargetOwner(record, isCurrent)) detached++;
+            }
+            return detached;
+          },
+          async deleteThread(authorize) { calls.push(`delete:${authorize().threadId}`); },
+        });
+        const allocate = () => rotation(async () => {
+          calls.push("allocate");
+          const claimed = store.claimWorkspaceIdentity("/fresh", "fresh");
+          if (!claimed) throw new TelegramWorkspaceSlotUnavailableError();
+          return claimed.slot;
+        });
+        if (scenario === "detached") {
+          assert.equal(await allocate(), "A");
+          assert.deepEqual(calls, ["allocate", "reconcile", "delete:40", "allocate"]);
+          assert.equal(store.list().length, 0);
+        } else {
+          // Reconciliation failure is diagnostic; live-looking owners keep rotation blocked.
+          await assert.rejects(allocate(), /rotation blocked \(protected-capacity\)/u);
+          assert.deepEqual(calls, ["allocate", "reconcile"]);
+          assert.ok(events.includes("Telegram Workspace dead-owner reconciliation failed."));
+          assert.equal(store.list().length, 26);
+        }
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 test("Dead-owner reclamation refuses replacement and partial custody, then resumes interrupted exact groups", async (t) => {
   const binding: TelegramWorkspaceThreadBinding = {
     ...createTelegramWorkspaceBindingIdentity("/repo/dead-owner")!,

@@ -28,6 +28,7 @@ import {
   hasTelegramBusCapability,
   isTelegramBusEnvelopeAuthorized,
   getTelegramBusFollowerSocketPath,
+  getTelegramOwnerInstanceLiveness,
   sendTelegramBusLocalEnvelope,
   stripTelegramBusApiMetadata,
   type TelegramBusEnvelope,
@@ -35,6 +36,7 @@ import {
   type TelegramBusFollowerView,
   type TelegramBusInstanceRegistration,
   type TelegramBusProtocolIdentity,
+  type TelegramProcessLiveness,
   type TelegramBusSocketPathSource,
   TELEGRAM_BUS_CAPABILITY_DURABLE_FOLLOWER_ADMISSION,
   TELEGRAM_BUS_CAPABILITY_QUEUE_HANDOFF,
@@ -422,8 +424,42 @@ export function createTelegramBusLeaderRuntimeAssembly<TContext>(
         });
       },
     }).run;
+  const reconcileDeadOwners = createTelegramDeadPersistedOwnerReconciler({
+    instanceId: deps.instanceId,
+    topicTargetStore: deps.topicTargetStore,
+    listFollowers: () => deps.runtime.followerRegistry.list(),
+    getCurrentLeaderEpoch: deps.getCurrentLeaderEpoch,
+    getTelegramProfile: deps.getTelegramProfile,
+    runWorkspaceOperation,
+    recordRuntimeEvent: deps.recordRuntimeEvent,
+  });
+  let deadOwnerReconciliationGeneration = 0;
+  let deadOwnerReconciliationTimer: ReturnType<typeof setTimeout> | undefined;
+  const cancelStartupDeadOwnerReconciliation = () => {
+    deadOwnerReconciliationGeneration += 1;
+    if (deadOwnerReconciliationTimer) clearTimeout(deadOwnerReconciliationTimer);
+    deadOwnerReconciliationTimer = undefined;
+  };
+  /**
+   * Wait one follower-staleness window, like startup display contraction: live followers
+   * re-register first and early registrations do not compete for profile admission.
+   */
+  const armStartupDeadOwnerReconciliation = () => {
+    cancelStartupDeadOwnerReconciliation();
+    const generation = deadOwnerReconciliationGeneration;
+    const isCurrent = () => generation === deadOwnerReconciliationGeneration;
+    deadOwnerReconciliationTimer = setTimeout(() => {
+      deadOwnerReconciliationTimer = undefined;
+      if (!isCurrent()) return;
+      void reconcileDeadOwners(isCurrent).catch((error: unknown) => {
+        deps.recordRuntimeEvent("bus", error, { phase: "dead-owner-reconciliation" });
+      });
+    }, deps.runtime.followerStaleAfterMs ?? TELEGRAM_BUS_FOLLOWER_STALE_AFTER_MS);
+    deadOwnerReconciliationTimer.unref?.();
+  };
   const runWithWorkspaceCapacity = deps.workspaceRotation && deps.captureWorkspaceExternalProtection &&
     deps.getCurrentLeaderEpoch ? createTelegramWorkspaceSlotRotation({
+      reconcileDeadOwners,
       ...deps.workspaceRotation, store: deps.topicTargetStore,
       getLeaderEpoch: deps.getCurrentLeaderEpoch,
       getExternalProtection: deps.captureWorkspaceExternalProtection,
@@ -942,6 +978,7 @@ export function createTelegramBusLeaderRuntimeAssembly<TContext>(
     resetThreadNameAdmitted,
     captureWorkspaceExternalProtection: deps.captureWorkspaceExternalProtection,
     async startPolling(ctx: TContext) {
+      cancelStartupDeadOwnerReconciliation();
       if (display) beginStartupDisplayStabilization();
       try {
         await runtime.startPolling(ctx);
@@ -950,8 +987,12 @@ export function createTelegramBusLeaderRuntimeAssembly<TContext>(
         throw error;
       }
       if (display) armStartupDisplayReconciliation();
+      // Detached: startup never waits on, or fails because of, dead-owner recovery. Its
+      // inactivity evidence only serves pressure rotation, so it runs where rotation exists.
+      if (runWithWorkspaceCapacity) armStartupDeadOwnerReconciliation();
     },
     async stopPolling() {
+      cancelStartupDeadOwnerReconciliation();
       cancelStartupDisplayStabilization();
       await runtime.stopPolling();
     },
@@ -1803,6 +1844,126 @@ export function createTelegramBusFollowerConfirmedDeadHandler(
   deps: TelegramBusFollowerDisconnectHandlerDeps,
 ): (follower: TelegramBusFollowerView) => Promise<void> {
   return createTelegramBusFollowerCleanupHandler(deps, "confirmed-dead");
+}
+
+export interface TelegramDeadPersistedOwnerReconcilerDeps {
+  instanceId: string;
+  topicTargetStore: Pick<Threads.TelegramTopicTargetStore,
+    "load" | "list" | "listWorkspaceBindings" | "detachTargetOwner" | "markOfflineByInstanceId" |
+    "markOwnerlessWorkspaceBindingsInactive" | "persist">;
+  listFollowers: () => readonly Pick<TelegramBusFollowerView, "instanceId" | "target">[];
+  getOwnerLiveness?: (instanceId: string) => TelegramProcessLiveness;
+  getCurrentLeaderEpoch?: () => number | string | undefined;
+  getTelegramProfile?: () => string | undefined;
+  runWorkspaceOperation: TelegramWorkspaceOperationRunner;
+  recordRuntimeEvent: (category: string, error: unknown, details?: Record<string, unknown>) => void;
+}
+
+/**
+ * Leader-side recovery for owners that ended without a Telegram detach (crash, kill,
+ * Windows window close). Only an absent exact PID proves death; detachment never calls
+ * Telegram and only the existing pressure rotation may later delete the Thread. Bindings
+ * already without an owner record are stamped inactive once all their known owners are dead.
+ * Resolves to the number of detached owners plus stamped bindings.
+ */
+export function createTelegramDeadPersistedOwnerReconciler(
+  deps: TelegramDeadPersistedOwnerReconcilerDeps,
+): (isCallerCurrent?: () => boolean) => Promise<number> {
+  const getOwnerLiveness = deps.getOwnerLiveness ?? ((instanceId: string) =>
+    getTelegramOwnerInstanceLiveness(instanceId));
+  // Kept until admission is acknowledged, so a lost acquisition acknowledgement resumes and
+  // releases the exact lease instead of leaking a profile lease of this live process.
+  let pendingOperationId: string | undefined;
+  return async (isCallerCurrent = () => true) => {
+    const epoch = deps.getCurrentLeaderEpoch?.();
+    const profile = deps.getTelegramProfile?.();
+    if (deps.getCurrentLeaderEpoch && epoch === undefined) return 0;
+    const isCurrent = () => isCallerCurrent() &&
+      (!deps.getCurrentLeaderEpoch || deps.getCurrentLeaderEpoch() === epoch) &&
+      deps.getTelegramProfile?.() === profile;
+    if (!isCurrent()) return 0;
+    let admitted = false;
+    const attempt = () => {
+      const operationId = pendingOperationId ??= createTelegramWorkspaceAdmissionOperationId();
+      return deps.runWorkspaceOperation({
+        operationId,
+        operationKind: "workspace.reconcile-dead-owners",
+        scopes: [{ kind: "profile" }],
+      }, async () => {
+        admitted = true;
+        if (pendingOperationId === operationId) pendingOperationId = undefined;
+        return reconcile();
+      });
+    };
+    try {
+      return await attempt();
+    } catch (error) {
+      if (admitted || pendingOperationId === undefined || !isCurrent()) throw error;
+      return await attempt();
+    }
+    async function reconcile(): Promise<number> {
+      if (!isCurrent()) return 0;
+      await deps.topicTargetStore.load();
+      if (!isCurrent()) return 0;
+      const followers = deps.listFollowers();
+      const sameTarget = (left: TelegramTarget, right: TelegramTarget) =>
+        left.chatId === right.chatId && left.threadId === right.threadId;
+      const isBound = (target: TelegramTarget) => deps.topicTargetStore.listWorkspaceBindings()
+        .some((binding) => sameTarget(binding.target, target));
+      const liveness = new Map<string, TelegramProcessLiveness>();
+      let reconciled = 0;
+      let released = false;
+      // Bound records first: releasing by instance id must never drop a bound record unstamped.
+      const candidates = deps.topicTargetStore.list()
+        .filter((record) => record.status === "active" || record.status === "starting")
+        .sort((left, right) => Number(isBound(right.target)) - Number(isBound(left.target)));
+      for (const record of candidates) {
+        if (!isCurrent()) break;
+        const owner = record.instanceId;
+        if (!owner || owner === deps.instanceId) continue;
+        if (followers.some((follower) => follower.instanceId === owner ||
+            (!!follower.target && sameTarget(follower.target, record.target)))) continue;
+        if (!liveness.has(owner)) liveness.set(owner, getOwnerLiveness(owner));
+        if (liveness.get(owner) !== "dead") continue;
+        const bound = isBound(record.target);
+        if (bound) {
+          // A mismatched owner/slot/binding set fails closed inside the fenced transition.
+          if (!await deps.topicTargetStore.detachTargetOwner(record, isCurrent)) continue;
+        } else {
+          if (deps.topicTargetStore.list().some((other) => other.instanceId === owner &&
+              (other.status === "active" || other.status === "starting") && isBound(other.target))) continue;
+          if (deps.topicTargetStore.markOfflineByInstanceId(owner) === 0) continue;
+          released = true;
+        }
+        reconciled += 1;
+        deps.recordRuntimeEvent("bus", "Telegram Thread owner process ended; record detached", {
+          phase: "dead-owner-detached", instanceId: owner, slot: record.slot,
+          chatId: record.target.chatId, threadId: record.target.threadId, bound,
+        });
+      }
+      if (isCurrent()) {
+        const stamped = deps.topicTargetStore.markOwnerlessWorkspaceBindingsInactive({
+          isOwnerDead(instanceId) {
+            if (instanceId === deps.instanceId ||
+                followers.some((follower) => follower.instanceId === instanceId)) return false;
+            if (!liveness.has(instanceId)) liveness.set(instanceId, getOwnerLiveness(instanceId));
+            return liveness.get(instanceId) === "dead";
+          },
+          isTargetRegistered: (target) => followers.some((follower) =>
+            !!follower.target && sameTarget(follower.target, target)),
+        });
+        for (const slot of stamped) {
+          deps.recordRuntimeEvent("bus", "Telegram Workspace binding owners ended; binding inactive", {
+            phase: "ownerless-binding-inactive", slot,
+          });
+        }
+        reconciled += stamped.length;
+        released ||= stamped.length > 0;
+      }
+      if (released && isCurrent()) await deps.topicTargetStore.persist();
+      return reconciled;
+    }
+  };
 }
 
 export function createTelegramBusLeaderTargetProvisioner<TContext>(

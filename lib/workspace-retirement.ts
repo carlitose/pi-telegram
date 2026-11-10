@@ -1343,6 +1343,8 @@ export interface TelegramWorkspaceSlotRotationPorts extends TelegramWorkspaceOpe
     binding: TelegramWorkspaceThreadBinding,
     isCurrent: () => boolean,
   ) => Promise<TelegramWorkspaceDeadQueueReclamation>;
+  /** Non-destructively detach persisted owners proven dead; returns the reconciled count. */
+  reconcileDeadOwners?: (isCurrent: () => boolean) => Promise<number>;
 }
 
 /** Retry allocation once, only after the failed operation released all ordinary leases. */
@@ -1417,6 +1419,18 @@ export function createTelegramWorkspaceSlotRotation(input: TelegramWorkspaceSlot
       try { return await operation(); }
       catch (error) {
         if (!(error instanceof TelegramWorkspaceSlotUnavailableError)) throw error;
+        if (input.reconcileDeadOwners) {
+          // Dead owners otherwise keep their letters protected, leaving rotation no candidate.
+          try { await input.reconcileDeadOwners(isCurrent); }
+          catch (reconcileError) {
+            try {
+              input.recordEvent("Telegram Workspace dead-owner reconciliation failed.", {
+                error: reconcileError instanceof Error ? reconcileError.message : String(reconcileError),
+              });
+            } catch { /* Diagnostics cannot block rotation. */ }
+          }
+          if (!isCurrent()) throw new Error("Telegram Workspace allocation lost leader authority.");
+        }
         if (input.reclaimDeadOwnerQueuedWork) {
           const candidates = await input.runExclusive(async () => {
             await input.store.load();

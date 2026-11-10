@@ -957,6 +957,22 @@ export function createTelegramWorkspaceSlotRotation(input) {
             catch (error) {
                 if (!(error instanceof TelegramWorkspaceSlotUnavailableError))
                     throw error;
+                if (input.reconcileDeadOwners) {
+                    // Dead owners otherwise keep their letters protected, leaving rotation no candidate.
+                    try {
+                        await input.reconcileDeadOwners(isCurrent);
+                    }
+                    catch (reconcileError) {
+                        try {
+                            input.recordEvent("Telegram Workspace dead-owner reconciliation failed.", {
+                                error: reconcileError instanceof Error ? reconcileError.message : String(reconcileError),
+                            });
+                        }
+                        catch { /* Diagnostics cannot block rotation. */ }
+                    }
+                    if (!isCurrent())
+                        throw new Error("Telegram Workspace allocation lost leader authority.");
+                }
                 if (input.reclaimDeadOwnerQueuedWork) {
                     const candidates = await input.runExclusive(async () => {
                         await input.store.load();

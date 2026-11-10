@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+- `Workspace slots`: A Pi that ends without a clean exit (crash, kill, or closing its window on Windows) no longer holds its Workspace letter forever. When the leader starts and when `A`–`Z` are full, it detaches owners whose process is gone and marks bindings whose known owners are all gone as inactive, so pressure rotation can reuse their letters; this never deletes a Thread. Leader bindings also keep complete journal evidence across restarts.
+
 ## 0.1.7: Windows /new
 
 - `Windows /new`: Telegram `/new` in a Workspace Thread now compares the bound Workspace path with Pi's native session cwd in normalized form. Windows sessions (`C:\…`) no longer always report a failed new session, and the successor session claims its handoff instead of discarding it as stale. Other commands do not compare the cwd and are unaffected.
