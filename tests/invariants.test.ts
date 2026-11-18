@@ -1,6 +1,7 @@
 /**
  * Regression tests for project architecture invariants
  * Guards import graph shape, shared-bucket bans, and polling SDK boundary rules
+ * Zones: shared utils
  */
 
 import assert from "node:assert/strict";
@@ -51,6 +52,20 @@ test("Unreleased changelog respects the project release-entry budget", () => {
     [],
     "Unreleased entries must contain at most 512 characters",
   );
+});
+
+test("Validation retains complete platform profiles on standard hosted runners", () => {
+  for (const runner of ["ubuntu-latest", "macos-26-intel", "windows-latest"]) {
+    assert.ok(validateWorkflowSource.includes(`- ${runner}`), `missing standard runner ${runner}`);
+  }
+  assert.match(validateWorkflowSource, /node-version: 24/u);
+  for (const command of [
+    "npm ci", "npm run build", "npm run build:check", "npm run check",
+    "npm run typecheck", "npm test", "npm run pack:check", "npm run audit",
+  ]) {
+    assert.ok(validateWorkflowSource.split("\n").some((line) => line.trim() === `run: ${command}`),
+      `missing full-profile check ${command}`);
+  }
 });
 
 test("Release CI validates exact tags and publishes through npm Trusted Publisher", () => {
