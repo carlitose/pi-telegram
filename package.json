@@ -1,10 +1,10 @@
 {
   "name": "@carlitose86/pi-telegram-reactive",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "private": false,
   "publishConfig": {
     "access": "public",
-    "tag": "next"
+    "tag": "latest"
   },
   "description": "Pi Telegram Reactive — standalone Telegram runtime adapter for Pi",
   "keywords": [

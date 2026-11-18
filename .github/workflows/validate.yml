@@ -17,7 +17,8 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
-          - macos-latest
+          # ARM hosted capacity can leave jobs unassigned; retain the full macOS 26 profile.
+          - macos-26-intel
           - windows-latest
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10

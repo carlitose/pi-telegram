@@ -25,6 +25,7 @@ import * as Status from "./status.ts";
 import * as TelegramApi from "./telegram-api.ts";
 import type { TelegramTarget } from "./target.ts";
 import * as GenerativeApps from "./generative-apps.ts";
+import type { TelegramWorkStatusRuntime } from "./work-status.ts";
 type ActivePiModel = NonNullable<Pi.ExtensionContext["model"]>;
 type TelegramRuntimeEventRecorder = (category: string, error: unknown, details?: Record<string, unknown>) => void;
 type TelegramBridgeStatusUpdater = Status.TelegramStatusRuntime<Pi.ExtensionContext>["updateStatus"];
@@ -208,6 +209,7 @@ export declare function registerTelegramCommandsAndTools({ pi, agentDir, configS
 interface TelegramLifecycleBindingDeps {
     pi: Pi.ExtensionAPI;
     publicationRuntime: TelegramBridgePublicationRuntime;
+    workStatusRuntime: TelegramWorkStatusRuntime;
     activityRuntime: Activity.TelegramActivityRuntime;
     activityVerbosityRuntime?: ActivityVerbosity.TelegramActivityVerbosityRuntime;
     assistantOutputRuntime: Pick<Activity.TelegramAssistantOutputRuntime, "start" | "beginTurn" | "hasAdmittedTelegramIntermediate" | "waitForIdle" | "stop">;
@@ -257,5 +259,5 @@ interface TelegramLifecycleBindingDeps {
     updateStatus: TelegramBridgeStatusUpdater;
     recordRuntimeEvent: TelegramRuntimeEventRecorder;
 }
-export declare function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, activityRuntime, activityVerbosityRuntime, assistantOutputRuntime, localPromptEchoRuntime, sessionLifecycleRuntime, configStore, abort, typing, lifecycle, activeTurnRuntime, telegramQueueStore, modelSwitchController, previewRuntime, promptDispatchRuntime, deferredQueueDispatchRuntime, modelContextAvailabilityRuntime, disconnectOnQuit, onSessionStarted, shutdownGenerativeAppLiveSurfaces, resolveAutomaticThreadCleanupEnabled, buttonActionStore, callMultipart, sendChatAction, sendRecordVoiceAction, sendMarkdownReply, sendTextReply, dispatchNextQueuedTelegramTurn, midRunSteer, onPromptHandedOff, answerGuestQuery, deleteMessage, sendGuestReply, editGuestReply, stopGuestPlaceholder, preparePreviewDelivery, finalizeMarkdownPreview, proactivePushTargetGetter, getAssistantRenderingMode, recordMessageOwnership, canSendAgentActivity, isSessionContextActive, isTurnTransportActive, updateStatus, recordRuntimeEvent, }: TelegramLifecycleBindingDeps): void;
+export declare function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, workStatusRuntime, activityRuntime, activityVerbosityRuntime, assistantOutputRuntime, localPromptEchoRuntime, sessionLifecycleRuntime, configStore, abort, typing, lifecycle, activeTurnRuntime, telegramQueueStore, modelSwitchController, previewRuntime, promptDispatchRuntime, deferredQueueDispatchRuntime, modelContextAvailabilityRuntime, disconnectOnQuit, onSessionStarted, shutdownGenerativeAppLiveSurfaces, resolveAutomaticThreadCleanupEnabled, buttonActionStore, callMultipart, sendChatAction, sendRecordVoiceAction, sendMarkdownReply, sendTextReply, dispatchNextQueuedTelegramTurn, midRunSteer, onPromptHandedOff, answerGuestQuery, deleteMessage, sendGuestReply, editGuestReply, stopGuestPlaceholder, preparePreviewDelivery, finalizeMarkdownPreview, proactivePushTargetGetter, getAssistantRenderingMode, recordMessageOwnership, canSendAgentActivity, isSessionContextActive, isTurnTransportActive, updateStatus, recordRuntimeEvent, }: TelegramLifecycleBindingDeps): void;
 export {};

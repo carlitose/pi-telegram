@@ -8,6 +8,7 @@ Living index of project documentation in `/docs`.
 
 ## Documents
 
+- [Thread work-status release](./specs/thread-work-status-release.md) — 0.1.9 scope, release gates and linked implementation ticket
 - [architecture.md](./architecture.md) — Overview of the Telegram bridge runtime, optional profile isolation, queueing model and Priority/Normal plus Keep/Skip reaction policy, native Rich Markdown delivery, UI/compat rendering, and interactive controls
 - [public-api.md](./public-api.md) — Stable public API map: package entrypoints, commands, config, assistant markup, extension APIs, smoke examples, and compatibility boundaries
 - [delivery.md](./delivery.md) — Target-aware companion delivery contract for operational views, logical message handles, target scopes, lifecycle fencing, and leader/follower transport

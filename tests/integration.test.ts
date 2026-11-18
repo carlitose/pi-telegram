@@ -927,6 +927,30 @@ function setRuntimeTestFetch(fetchImpl: typeof fetch): () => void {
   };
 }
 
+// These scenarios assert assistant/menu ordering independently from lifecycle
+// status. Keep the status traffic observable so authority tests can assert it too.
+function setRuntimeTestFetchWithSeparateWorkStatus(fetchImpl: typeof fetch) {
+  const workStatusCalls: Array<{ method: string; body: Record<string, unknown> }> = [];
+  const texts = new Set([
+    "<b>⏳ Pi is working.</b>", "<b>⏳ Pi is waiting for your input.</b>",
+    "<b>💤 Pi is idle.</b>", "<b>⚠️ Pi work status is unknown.</b>",
+  ]);
+  const restore = setRuntimeTestFetch(async (input, init) => {
+    const method = getRuntimeTelegramApiMethod(input);
+    const body = parseJsonRequestBody(init);
+    if ((method === "sendMessage" || method === "editMessageText") && texts.has(String(body?.text))) {
+      workStatusCalls.push({ method, body: body ?? {} });
+      if (method === "sendMessage") {
+        assert.equal(body?.disable_notification, true);
+        assert.equal(body?.reply_parameters, undefined);
+      }
+      return createRuntimeTelegramApiResponse(method === "sendMessage" ? { message_id: 99000 } : true);
+    }
+    return fetchImpl(input, init);
+  });
+  return Object.assign(restore, { workStatusCalls });
+}
+
 async function createRuntimeTelegramConfigFixture() {
   const agentDir = await ensureRuntimeAgentDir();
   const configPath = join(agentDir, "telegram.json");
@@ -4814,7 +4838,7 @@ test("Extension runtime fences queued final and preview after polling ownership 
     },
   });
   let getUpdatesCalls = 0;
-  const restoreFetch = setRuntimeTestFetch(async (input, init) => {
+  const restoreFetch = setRuntimeTestFetchWithSeparateWorkStatus(async (input, init) => {
     const method = getRuntimeTelegramApiMethod(input);
     const body = parseJsonRequestBody(init);
     if (method === "deleteWebhook") {
@@ -4929,6 +4953,10 @@ test("Extension runtime fences queued final and preview after polling ownership 
     assert.deepEqual(draftTexts, []);
     assert.deepEqual(sentTexts, []);
     assert.deepEqual(sentBodies, []);
+    assert.deepEqual(restoreFetch.workStatusCalls, [{
+      method: "sendMessage",
+      body: { chat_id: 99, text: "<b>⏳ Pi is working.</b>", parse_mode: "HTML", disable_notification: true },
+    }]);
     assert.deepEqual(editedTexts, []);
     assert.deepEqual(
       Locks.readLocks(join(await ensureRuntimeAgentDir(), "tmp", "telegram", "owners.json")).default,
@@ -5068,7 +5096,7 @@ test(`Extension runtime preserves accepted work and fences delivery after ${loss
   let releaseConflicts!: () => void;
   const conflictGate = new Promise<void>((resolve) => { releaseConflicts = resolve; });
   const ctx = createRuntimeExtensionContext({ cwd: "/repo/queue-owner-a" });
-  const restoreFetch = setRuntimeTestFetch(async (input, init) => {
+  const restoreFetch = setRuntimeTestFetchWithSeparateWorkStatus(async (input, init) => {
     const method = getRuntimeTelegramApiMethod(input);
     const body = parseJsonRequestBody(init);
     if (method === "deleteWebhook") {
@@ -5181,6 +5209,10 @@ test(`Extension runtime preserves accepted work and fences delivery after ${loss
     // Follow-up dispatch is intentionally routed through the session-bound
     // deferred queue timer; wait on real time instead of setImmediate turns.
     await waitForCondition(() => sentMessages.length === 2);
+    assert.deepEqual(restoreFetch.workStatusCalls, [{
+      method: "sendMessage",
+      body: { chat_id: 99, text: "<b>⏳ Pi is working.</b>", parse_mode: "HTML", disable_notification: true },
+    }]);
     assert.deepEqual(sentBodies, []);
     assert.match(
       getRuntimeHarnessMessageText(sentMessages[1] as RuntimeHarnessMessage),
@@ -5200,7 +5232,7 @@ test("Extension runtime ignores the retired proactive opt-out while Telegram is 
   const sentBodies: Array<Record<string, unknown>> = [];
   const typingBodies: Array<Record<string, unknown>> = [];
   const { handlers, commands, pi, getActiveTools } = createRuntimePiHarness();
-  const restoreFetch = setRuntimeTestFetch(async (input, init) => {
+  const restoreFetch = setRuntimeTestFetchWithSeparateWorkStatus(async (input, init) => {
     const method = getRuntimeTelegramApiMethod(input);
     if (method === "deleteWebhook") {
       return createRuntimeTelegramApiResponse(true);
@@ -5459,7 +5491,7 @@ test("Extension runtime resolves stale same-cwd lock before proactive local resu
   const sentBodies: Array<Record<string, unknown>> = [];
   let getUpdatesCalls = 0;
   const { handlers, pi } = createRuntimePiHarness();
-  const restoreFetch = setRuntimeTestFetch(async (input, init) => {
+  const restoreFetch = setRuntimeTestFetchWithSeparateWorkStatus(async (input, init) => {
     const method = getRuntimeTelegramApiMethod(input);
     if (method === "deleteWebhook") {
       return createRuntimeTelegramApiResponse(true);
@@ -5560,7 +5592,7 @@ test("Extension runtime sends proactive checkpoints and final once in source ord
   const telegramConfig = await createRuntimeTelegramConfigFixture();
   const sentBodies: Array<Record<string, unknown>> = [];
   const { handlers, commands, pi } = createRuntimePiHarness();
-  const restoreFetch = setRuntimeTestFetch(async (input, init) => {
+  const restoreFetch = setRuntimeTestFetchWithSeparateWorkStatus(async (input, init) => {
     const method = getRuntimeTelegramApiMethod(input);
     if (method === "deleteWebhook") {
       return createRuntimeTelegramApiResponse(true);
@@ -6340,7 +6372,7 @@ test(`Extension runtime steers a busy-run Telegram prompt at the next turn bound
     },
   });
   let getUpdatesCalls = 0;
-  const restoreFetch = setRuntimeTestFetch(async (input, init) => {
+  const restoreFetch = setRuntimeTestFetchWithSeparateWorkStatus(async (input, init) => {
     const method = getRuntimeTelegramApiMethod(input);
     if (method === "deleteWebhook") {
       return createRuntimeTelegramApiResponse(true);
@@ -6952,7 +6984,7 @@ test("Extension runtime handles immediate status before queued prompt after agen
     },
   });
   let getUpdatesCalls = 0;
-  const restoreFetch = setRuntimeTestFetch(async (input, init) => {
+  const restoreFetch = setRuntimeTestFetchWithSeparateWorkStatus(async (input, init) => {
     const method = getRuntimeTelegramApiMethod(input);
     const body = parseJsonRequestBody(init);
     if (method === "deleteWebhook")
@@ -7089,7 +7121,7 @@ test("Extension runtime opens immediate model menu before queued prompt after ag
     },
   });
   let getUpdatesCalls = 0;
-  const restoreFetch = setRuntimeTestFetch(async (input, init) => {
+  const restoreFetch = setRuntimeTestFetchWithSeparateWorkStatus(async (input, init) => {
     const method = getRuntimeTelegramApiMethod(input);
     const body = parseJsonRequestBody(init);
     if (method === "deleteWebhook") {
@@ -7376,11 +7408,82 @@ test("Extension runtime keeps queued turns blocked until compaction settles", as
   }
 });
 
+test("Extension runtime publishes lifecycle work status inside the assigned Thread", async () => {
+  const telegramConfig = await createRuntimeTelegramConfigFixture();
+  const calls: Array<{ method: string; body: Record<string, unknown> }> = [];
+  const { handlers, commands, pi } = createRuntimePiHarness();
+  const restoreFetch = setRuntimeTestFetch(async (input, init) => {
+    const method = getRuntimeTelegramApiMethod(input);
+    const body = parseJsonRequestBody(init) ?? {};
+    if (method === "getMe") return createRuntimeTelegramApiResponse({
+      id: 123, username: "test_bot", has_topics_enabled: true,
+    });
+    if (method === "createForumTopic") return createRuntimeTelegramApiResponse({
+      message_thread_id: 42, name: "Atlas",
+    });
+    if (method === "getUpdates") return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(new DOMException("stop", "AbortError")));
+    });
+    if (method === "sendMessage" || method === "editMessageText") {
+      calls.push({ method, body });
+      return createRuntimeTelegramApiResponse(method === "sendMessage" ? { message_id: 901 } : true);
+    }
+    if (["deleteWebhook", "setMyCommands", "sendChatAction", "editForumTopic"].includes(method)) {
+      return createRuntimeTelegramApiResponse(true);
+    }
+    throw new Error(`Unexpected Telegram API method: ${method}`);
+  });
+  const ctx = createRuntimeExtensionContext({ cwd: "/repo/visible-work-status" });
+  try {
+    await telegramConfig.write({
+      botToken: "123:abc", botId: 123, botUsername: "test_bot",
+      allowedUserId: 77, lastUpdateId: 0, assistant: { activity: "quiet" },
+    });
+    await writeRuntimeTelegramLocks({});
+    (await getRuntimeTelegramExtension())(pi);
+    await handlers.get("session_start")?.({}, ctx);
+    await commands.get("telegram-connect")?.handler("", ctx);
+    await handlers.get("agent_start")?.({}, ctx);
+    await waitForCondition(() => calls.some((call) => call.body.text === "<b>⏳ Pi is working.</b>"));
+    const first = calls.find((call) => call.body.text === "<b>⏳ Pi is working.</b>")!;
+    assert.deepEqual(first, {
+      method: "sendMessage", body: {
+        chat_id: 77, message_thread_id: 42, text: "<b>⏳ Pi is working.</b>",
+        parse_mode: "HTML", disable_notification: true,
+      },
+    });
+    await handlers.get("agent_end")?.({ messages: [] }, ctx);
+    await flushMicrotasks(20);
+    assert.equal(calls.some((call) => call.body.text === "<b>💤 Pi is idle.</b>"), false);
+    await handlers.get("agent_start")?.({}, ctx);
+    await flushMicrotasks(20);
+    assert.equal(calls.filter((call) => call.body.text === "<b>⏳ Pi is working.</b>").length, 1);
+    await handlers.get("ui_prompt_start")?.({ kind: "confirm", title: "Approve?" }, ctx);
+    await waitForCondition(() => calls.at(-1)?.body.text === "<b>⏳ Pi is waiting for your input.</b>");
+    await handlers.get("ui_prompt_end")?.({}, ctx);
+    await waitForCondition(() => calls.at(-1)?.body.text === "<b>⏳ Pi is working.</b>");
+    await handlers.get("agent_settled")?.({}, ctx);
+    await waitForCondition(() => calls.at(-1)?.body.text === "<b>💤 Pi is idle.</b>");
+    const statusEdits = calls.filter((call) => call.method === "editMessageText");
+    assert.equal(statusEdits.length, 3);
+    for (const { body } of statusEdits) {
+      assert.equal(body.chat_id, 77);
+      assert.equal(body.message_thread_id, 42);
+      assert.equal(body.message_id, 901);
+    }
+  } finally {
+    await commands.get("telegram-disconnect")?.handler("", ctx);
+    await handlers.get("session_shutdown")?.({}, ctx);
+    restoreFetch();
+    await telegramConfig.restore();
+  }
+});
+
 test("Extension runtime echoes an interactive terminal prompt silently before its projected reply", async () => {
   const telegramConfig = await createRuntimeTelegramConfigFixture();
   const committed: Array<{ method: string; text: string; silent: boolean }> = [];
   const { handlers, commands, pi } = createRuntimePiHarness();
-  const restoreFetch = setRuntimeTestFetch(async (input, init) => {
+  const restoreFetch = setRuntimeTestFetchWithSeparateWorkStatus(async (input, init) => {
     const method = getRuntimeTelegramApiMethod(input);
     if (method === "deleteWebhook") return createRuntimeTelegramApiResponse(true);
     if (method === "getUpdates") throw new DOMException("stop", "AbortError");
@@ -7439,7 +7542,7 @@ test("Extension runtime compaction notices cannot overtake a pending local final
   let releaseFinal!: () => void;
   const finalGate = new Promise<void>((resolve) => { releaseFinal = resolve; });
   const { handlers, commands, pi } = createRuntimePiHarness();
-  const restoreFetch = setRuntimeTestFetch(async (input, init) => {
+  const restoreFetch = setRuntimeTestFetchWithSeparateWorkStatus(async (input, init) => {
     const method = getRuntimeTelegramApiMethod(input);
     if (method === "deleteWebhook") return createRuntimeTelegramApiResponse(true);
     if (method === "getUpdates") throw new DOMException("stop", "AbortError");

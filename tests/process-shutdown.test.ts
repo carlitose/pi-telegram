@@ -18,54 +18,96 @@ const PI_CLI_AVAILABLE = (() => {
   return !result.error && result.status === 0;
 })();
 
-function runNodeScript(
-  script: string,
-  options: { env?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
-): Promise<{
+interface ProcessProbeOptions {
+  env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+  startupTimeoutMs?: number;
+  waitForReady?: boolean;
+}
+
+interface ProcessProbeResult {
   code: number | null;
   signal: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
-}> {
+}
+
+function waitForProcessExit(
+  child: ReturnType<typeof spawn>,
+  label: string,
+  options: ProcessProbeOptions,
+): Promise<ProcessProbeResult> {
+  let stdout = "";
+  let stderr = "";
+  // Both adapters request stdout/stderr pipes; readiness uses a separate IPC channel.
+  child.stdout!.setEncoding("utf8");
+  child.stderr!.setEncoding("utf8");
+  child.stdout!.on("data", (chunk) => { stdout += chunk; });
+  child.stderr!.on("data", (chunk) => { stderr += chunk; });
+  return new Promise((resolve, reject) => {
+    let awaitingReady = options.waitForReady === true;
+    const deadline = (phase: string, ms: number) => {
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        reject(new Error(`${label} ${phase} did not exit. stdout=${stdout} stderr=${stderr}`));
+      }, ms);
+      timer.unref?.();
+      return timer;
+    };
+    let timeout = deadline(awaitingReady ? "startup" : "shutdown",
+      awaitingReady ? options.startupTimeoutMs ?? 60_000 : options.timeoutMs ?? 20_000);
+    child.on("message", (message) => {
+      if (message !== "telegram-test-ready" || !awaitingReady) return;
+      awaitingReady = false;
+      clearTimeout(timeout);
+      // Cold module/CLI loading gets its own bound; the original exit budget is unchanged.
+      timeout = deadline("shutdown", options.timeoutMs ?? 20_000);
+    });
+    child.on("error", (error) => { clearTimeout(timeout); reject(error); });
+    child.on("exit", (code, signal) => {
+      clearTimeout(timeout);
+      if (awaitingReady && code === 0) {
+        reject(new Error(`${label} exited before readiness. stdout=${stdout} stderr=${stderr}`));
+      } else {
+        resolve({ code, signal, stdout, stderr });
+      }
+    });
+  });
+}
+
+function runNodeScript(
+  script: string,
+  options: ProcessProbeOptions = {},
+): Promise<ProcessProbeResult> {
   const child = spawn(
     process.execPath,
     ["--experimental-strip-types", "--input-type=module", "-e", script],
     {
       cwd: REPO_ROOT,
       env: { ...process.env, ...options.env },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: options.waitForReady ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"],
     },
   );
-  let stdout = "";
-  let stderr = "";
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => {
-    stdout += chunk;
-  });
-  child.stderr.on("data", (chunk) => {
-    stderr += chunk;
-  });
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(
-        new Error(
-          `Child process did not exit. stdout=${stdout} stderr=${stderr}`,
-        ),
-      );
-    }, options.timeoutMs ?? 20_000);
-    timeout.unref?.();
-    child.on("error", (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-    child.on("exit", (code, signal) => {
-      clearTimeout(timeout);
-      resolve({ code, signal, stdout, stderr });
-    });
-  });
+  return waitForProcessExit(child, "Child process", options);
 }
+
+test("Process probe separates cold startup from its unchanged shutdown deadline", async () => {
+  const result = await runNodeScript(`
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    process.send?.("telegram-test-ready");
+    process.channel?.unref();
+  `, { waitForReady: true, startupTimeoutMs: 5000, timeoutMs: 50 });
+  assert.equal(result.code, 0);
+  assert.equal(result.signal, null);
+});
+
+test("Process probe still rejects a live handle after readiness", async () => {
+  await assert.rejects(runNodeScript(`
+    process.send?.("telegram-test-ready");
+    process.channel?.unref();
+    setInterval(() => {}, 1000);
+  `, { waitForReady: true, startupTimeoutMs: 5000, timeoutMs: 50 }), /shutdown.*did not exit/u);
+});
 
 async function waitForFileText(
   path: string,
@@ -85,45 +127,14 @@ async function waitForFileText(
 
 function runPiPrint(
   args: string[],
-  options: { env?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
-): Promise<{
-  code: number | null;
-  signal: NodeJS.Signals | null;
-  stdout: string;
-  stderr: string;
-}> {
+  options: ProcessProbeOptions = {},
+): Promise<ProcessProbeResult> {
   const child = spawn("pi", args, {
     cwd: REPO_ROOT,
     env: { ...process.env, ...options.env },
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: options.waitForReady ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"],
   });
-  let stdout = "";
-  let stderr = "";
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-  child.stdout.on("data", (chunk) => {
-    stdout += chunk;
-  });
-  child.stderr.on("data", (chunk) => {
-    stderr += chunk;
-  });
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      child.kill("SIGKILL");
-      reject(
-        new Error(`pi -p did not exit. stdout=${stdout} stderr=${stderr}`),
-      );
-    }, options.timeoutMs ?? 20_000);
-    timeout.unref?.();
-    child.on("error", (error) => {
-      clearTimeout(timeout);
-      reject(error);
-    });
-    child.on("exit", (code, signal) => {
-      clearTimeout(timeout);
-      resolve({ code, signal, stdout, stderr });
-    });
-  });
+  return waitForProcessExit(child, "pi -p", options);
 }
 
 async function createPiPrintFixtureExtension(tempDir: string): Promise<string> {
@@ -145,6 +156,8 @@ async function createPiPrintFixtureExtension(tempDir: string): Promise<string> {
       `    if (forcedMode && ctx.mode === undefined) ctx.mode = forcedMode;\n` +
       `    const methodMarker = process.env.PI_TELEGRAM_TEST_METHOD_MARKER;\n` +
       `    if (methodMarker) appendFileSync(methodMarker, "session-mode:" + String(ctx.mode) + "\\n");\n` +
+      `    process.send?.("telegram-test-ready");\n` +
+      `    process.channel?.unref();\n` +
       `  });\n` +
       `  globalThis.fetch = async (input, init = {}) => {\n` +
       `    const method = String(input).split("/").at(-1);\n` +
@@ -238,7 +251,7 @@ async function runPiPrintWithTelegram(
       "echo",
       "Say OK.",
     ],
-    { env: { PI_CODING_AGENT_DIR: agentDir, ...env } },
+    { env: { PI_CODING_AGENT_DIR: agentDir, ...env }, waitForReady: true },
   );
 }
 
@@ -314,7 +327,7 @@ test("Child process sharing the agent dir does not poll while parent owns Telegr
       await handlers.get("session_shutdown")?.({}, ctx);
       process.exit(0);
     }, 20);
-    setTimeout(() => process.exit(2), 15_000).unref?.();
+    setTimeout(() => process.exit(2), 90_000).unref?.();
   `;
   const parent = spawn(
     process.execPath,
@@ -365,6 +378,8 @@ test("Child process sharing the agent dir does not poll while parent owns Telegr
       };
       const extension = (await import(${JSON.stringify(extensionUrl)})).default;
       extension(pi);
+      process.send?.("telegram-test-ready");
+      process.channel?.unref();
       const ctx = {
         cwd: "/repo/parent-owner",
         hasUI: false,
@@ -385,8 +400,8 @@ test("Child process sharing the agent dir does not poll while parent owns Telegr
         PI_CODING_AGENT_DIR: agentDir,
         PI_TELEGRAM_TEST_METHOD_MARKER: markerPath,
       },
-      // Importing the complete extension can exceed the generic process-probe
-      // budget on a loaded Windows runner; the child still must exit naturally.
+      // Bound cold imports separately; preserve the original natural-exit deadline.
+      waitForReady: true,
       timeoutMs: process.platform === "win32" ? 15_000 : 5_000,
     });
     assert.equal(child.code, 0, child.stderr);

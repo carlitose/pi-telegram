@@ -12,7 +12,7 @@ By default, every completed intermediate commentary block from a Telegram-origin
 
 For completed ordinary text without code or technical output, enable **Normal text only** in Settings (`assistant.normalTextOnly: true`). This overrides Final replies only, turns off drafts and makes Activity quiet without erasing saved preferences. Code/diff blocks are removed while surrounding prose, inline command names and native controls remain. Messages are complete blocks, not streamed tokens; there is no Goal/Loop-completion wait. See [Outbound](docs/outbound.md#public-assistant-output) for final-turn ownership and delivery limits.
 
-Pi Telegram Reactive is the distinct `@carlitose86/pi-telegram-reactive` preview, based on [`@llblab/pi-telegram`](https://github.com/llblab/pi-telegram) at commit `1ed9a2e06e4b18eed0017e89c09512d91a67b367`, with the approved source-level recovery/callback fixes and read-only terminal controls projection. The original llblab fork started from [`badlogic/pi-telegram`](https://github.com/badlogic/pi-telegram) commit [`cb34008`](https://github.com/badlogic/pi-telegram/commit/cb34008460b6c1ca036d92322f69d87f626be0fc); its attribution and MIT declaration are retained. This candidate is not evidence of npm publication or gallery indexing.
+Pi Telegram Reactive is the distinct `@carlitose86/pi-telegram-reactive` package, based on [`@llblab/pi-telegram`](https://github.com/llblab/pi-telegram) at commit `1ed9a2e06e4b18eed0017e89c09512d91a67b367`, with source-level recovery/callback fixes and read-only terminal controls projection. The original llblab fork started from [`badlogic/pi-telegram`](https://github.com/badlogic/pi-telegram) commit [`cb34008`](https://github.com/badlogic/pi-telegram/commit/cb34008460b6c1ca036d92322f69d87f626be0fc); its attribution and MIT declaration are retained.
 
 ## Install
 
@@ -25,10 +25,10 @@ pi install npm:@carlitose86/pi-telegram-reactive
 From git:
 
 ```bash
-pi install git:github.com/carlitose/pi-telegram@release/reactive-next-0
+pi install git:github.com/carlitose/pi-telegram@main
 ```
 
-These install commands apply once the corresponding preview or Git branch is published. For the movable preview channel use `pi install npm:@carlitose86/pi-telegram-reactive@next` and `pi update npm:@carlitose86/pi-telegram-reactive@next`; an exact-version registration remains pinned rather than following newer previews. Do not load both the upstream bridge and this fork, or retain a separate consumer transcript adapter when this package owns the projection.
+The unversioned npm installation follows the stable `latest` channel; run `pi update npm:@carlitose86/pi-telegram-reactive` to update it. An exact-version registration remains pinned. The Git installation follows integrated `main`, which can contain changes not yet published to npm. Do not load both the upstream bridge and this fork, or retain a separate consumer transcript adapter when this package owns the projection.
 
 Installed npm/git packages expose bundled Skills through their `pi.skills` manifest, so Pi package filters and package provenance remain authoritative. A checkout auto-discovered directly under Pi's user or project `extensions` directory contributes its adjacent source Skills even when Pi selects the checkout's compiled entrypoint; the two discovery paths are mutually exclusive.
 
@@ -102,6 +102,7 @@ Enable the optional capabilities the bridge needs in the [@BotFather](https://t.
 
 - Start a task in the terminal, walk away, and keep supervising it from your phone.
 - Send another prompt while Pi is busy; it waits in the queue and enters the running work at the next turn boundary, like steering from the terminal. The bot marks it with 👀 once the model reads it. Start it with `/later` (also as a photo or document caption) to keep it waiting until Pi is idle instead.
+- See a silent status message inside the current Thread: Pi is working, waiting for your input, or idle. It updates from Pi lifecycle events without depending on the app's typing indicator. Idle means the run settled, not that the requested task succeeded.
 - Open `/start` to inspect status, model, thinking, settings, prompt templates, and queue controls.
 - Send voice, images, files, replies, edits, or media groups; the bridge turns them into Pi context.
 - Ask for an artifact; `telegram_attach` returns it before the turn's separate final text, or through explicit direct Telegram delivery.
@@ -148,6 +149,15 @@ Enable the optional capabilities the bridge needs in the [@BotFather](https://t.
 | Runtime diagnostics | Use `/telegram-status` and recent runtime events for connection, role, negotiated bus protocol/build/capabilities, separate polling and inbound-worker progress, journal depth, local/foreign queue ownership, automatic retry waits, transport, and failures. | Compatible build skew, foreign semantic authority, a healthy poller, durable backoff and an infrastructure-blocked worker remain distinguishable without hidden logs. |
 | Safety and ownership | Pair one owner, lock transport, scope targets, and reject fake terminal behavior. | Remote access remains explicit, bounded, and understandable. |
 
+### Optional local speech-to-text
+
+For local voice-note transcription, add [`@carlitose86/pi-telegram-stt`](https://github.com/carlitose/pi-telegram-stt):
+
+```bash
+pi install npm:@carlitose86/pi-telegram-stt
+```
+
+It plugs into this bridge's transcription-provider fallback, with `whisper.cpp`, a configurable command, or a registered engine. Install your chosen engine/model and configure `telegram-stt.json` as described in its README; nothing is downloaded automatically, and the companion remains passive without configuration. Configured bridge inbound handlers still take priority. Audio stays local unless your chosen command sends it elsewhere.
 ## Core Loop
 
 ```text
