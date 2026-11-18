@@ -538,7 +538,7 @@ export function registerTelegramCommandsAndTools({ pi, agentDir, configStore, pe
         },
     });
 }
-export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, activityRuntime, activityVerbosityRuntime, assistantOutputRuntime, localPromptEchoRuntime, sessionLifecycleRuntime, configStore, abort, typing, lifecycle, activeTurnRuntime, telegramQueueStore, modelSwitchController, previewRuntime, promptDispatchRuntime, deferredQueueDispatchRuntime, modelContextAvailabilityRuntime, disconnectOnQuit, onSessionStarted, shutdownGenerativeAppLiveSurfaces, resolveAutomaticThreadCleanupEnabled, buttonActionStore, callMultipart, sendChatAction, sendRecordVoiceAction, sendMarkdownReply, sendTextReply, dispatchNextQueuedTelegramTurn, midRunSteer, onPromptHandedOff, answerGuestQuery, deleteMessage, sendGuestReply, editGuestReply, stopGuestPlaceholder, preparePreviewDelivery, finalizeMarkdownPreview, proactivePushTargetGetter, getAssistantRenderingMode, recordMessageOwnership, canSendAgentActivity, isSessionContextActive = () => true, isTurnTransportActive, updateStatus, recordRuntimeEvent, }) {
+export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, workStatusRuntime, activityRuntime, activityVerbosityRuntime, assistantOutputRuntime, localPromptEchoRuntime, sessionLifecycleRuntime, configStore, abort, typing, lifecycle, activeTurnRuntime, telegramQueueStore, modelSwitchController, previewRuntime, promptDispatchRuntime, deferredQueueDispatchRuntime, modelContextAvailabilityRuntime, disconnectOnQuit, onSessionStarted, shutdownGenerativeAppLiveSurfaces, resolveAutomaticThreadCleanupEnabled, buttonActionStore, callMultipart, sendChatAction, sendRecordVoiceAction, sendMarkdownReply, sendTextReply, dispatchNextQueuedTelegramTurn, midRunSteer, onPromptHandedOff, answerGuestQuery, deleteMessage, sendGuestReply, editGuestReply, stopGuestPlaceholder, preparePreviewDelivery, finalizeMarkdownPreview, proactivePushTargetGetter, getAssistantRenderingMode, recordMessageOwnership, canSendAgentActivity, isSessionContextActive = () => true, isTurnTransportActive, updateStatus, recordRuntimeEvent, }) {
     const agentEndResetter = Runtime.createTelegramAgentEndResetter({
         abort,
         typing,
@@ -715,6 +715,7 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
     Lifecycle.setResetTransportReplyDedup(Replies.resetTransportReplyDedup);
     const agentStartWithDedupReset = Lifecycle.createAgentStartDedupHook(agentLifecycleHooks.onAgentStart, scheduleActiveTurnDelivery);
     let uiPromptActive = false;
+    let workStatusGeneration = 0;
     const startAgentActivityTypingLoop = (ctx) => {
         if (uiPromptActive || !canSendAgentActivity(ctx))
             return false;
@@ -765,6 +766,7 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
         recordRuntimeEvent,
         onCompactionAbandoned: () => {
             observedAutomaticCompaction = false;
+            workStatusRuntime.update({ compaction: "unknown" });
             activityRuntime.onCompactionAbandoned();
         },
     });
@@ -792,6 +794,8 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
             });
         },
         async onSessionStart(event, ctx) {
+            workStatusGeneration += 1;
+            workStatusRuntime.reset();
             midRunSteer?.reset();
             cancelPendingFinalPublication();
             previewRuntime.invalidate();
@@ -808,6 +812,8 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
                 return;
             midRunSteer?.reset();
             shutdownGenerativeAppLiveSurfaces?.();
+            workStatusGeneration += 1;
+            workStatusRuntime.reset();
             agentLifecycleHooks.clearRetainedAgentEnd();
             activityRuntime.onSessionShutdown();
             activityVerbosityRuntime?.reset();
@@ -840,6 +846,7 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
                 observedAutomaticCompaction = true;
             activityRuntime.onCompactionStart(Pi.getSessionCompactionReason(event));
             compactionObserver.onSessionBeforeCompact(event, ctx);
+            workStatusRuntime.update({ compaction: true });
             if (shouldNotify)
                 sendCompactionNotice(Commands.TELEGRAM_COMPACTION_STARTED_MARKDOWN, ctx);
         },
@@ -848,6 +855,7 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
                 return;
             activityRuntime.onCompactionEnd(Pi.getSessionCompactionReason(event));
             compactionObserver.onSessionCompact(event, ctx);
+            workStatusRuntime.update({ compaction: false });
             if (observedAutomaticCompaction) {
                 observedAutomaticCompaction = false;
                 sendCompactionNotice(Commands.TELEGRAM_COMPACTION_COMPLETED_MARKDOWN, ctx);
@@ -858,6 +866,7 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
                 return;
             const shouldNotify = observedAutomaticCompaction;
             compactionObserver.onSessionCompactFailed(event, ctx);
+            workStatusRuntime.update({ compaction: false });
             if (!shouldNotify)
                 return;
             const notice = event.aborted
@@ -870,9 +879,13 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
                 return;
             agentWorkActive = true;
             cancelPendingFinalPublication();
+            const workGeneration = workStatusGeneration;
             await agentStartWithDedupReset(event, ctx);
+            if (workGeneration !== workStatusGeneration || !isSessionContextActive(ctx))
+                return;
             const turn = activeTurnRuntime.get();
             activityRuntime.onAgentStart(turn?.target, turn?.replyToMessageId);
+            workStatusRuntime.update({ agent: true });
             startAgentActivityTypingLoop(ctx);
         },
         async onToolExecutionStart(event, ctx) {
@@ -950,6 +963,7 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
             if (!isSessionContextActive(ctx))
                 return;
             uiPromptActive = true;
+            workStatusRuntime.update({ waiting: true });
             typing.stop();
             activityRuntime.onUiPromptStart(event.kind, event.title);
             updateStatus(ctx);
@@ -958,6 +972,7 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
             if (!isSessionContextActive(ctx))
                 return;
             uiPromptActive = false;
+            workStatusRuntime.update({ waiting: false });
             activityRuntime.onUiPromptEnd();
             if (agentWorkActive || lifecycle.isCompactionInProgress()) {
                 startAgentActivityTypingLoop(ctx);
@@ -978,6 +993,7 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
             if (!isSessionContextActive(ctx))
                 return;
             midRunSteer?.onAgentSettled(ctx);
+            const workGeneration = workStatusGeneration;
             const pending = pendingFinalPublication;
             try {
                 await agentLifecycleHooks.onAgentSettled(event, ctx);
@@ -986,9 +1002,10 @@ export function registerTelegramLifecycleRuntimeHooks({ pi, publicationRuntime, 
                 if (pendingFinalPublication === pending)
                     cancelPendingFinalPublication();
             }
-            if (!isSessionContextActive(ctx))
+            if (workGeneration !== workStatusGeneration || !isSessionContextActive(ctx))
                 return;
             agentWorkActive = false;
+            workStatusRuntime.update({ agent: false });
             activityRuntime.onAgentSettled();
             modelContextAvailabilityRuntime.reconcile();
         },

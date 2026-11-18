@@ -55,6 +55,7 @@ import * as Updates from "./updates.js";
 import * as Voice from "./voice.js";
 import * as WorkspaceAdmission from "./workspace-admission.js";
 import * as WorkspaceRetirement from "./workspace-retirement.js";
+import * as WorkStatus from "./work-status.js";
 const telegramBusProtocolIdentity = Bus.createTelegramCurrentBusProtocolIdentity([
     Bus.TELEGRAM_BUS_CAPABILITY_DURABLE_FOLLOWER_ADMISSION,
     Bus.TELEGRAM_BUS_CAPABILITY_QUEUE_HANDOFF,
@@ -692,6 +693,28 @@ export default function (pi) {
             sendMessage,
             sendRichMessage,
             editMessageText: editTelegramMessageText,
+        },
+    });
+    const workStatusRuntime = WorkStatus.createTelegramWorkStatusRuntime({
+        capture() {
+            const authority = publicationRuntime.capture();
+            return {
+                target: authority.target,
+                isCurrent() {
+                    return !activeTurnRuntime.get()?.guestQueryId && authority.isCurrent();
+                },
+            };
+        },
+        send(target, html) {
+            return replyRuntime.sendTextReply(target.chatId, undefined, html, {
+                target, parseMode: "HTML", disableNotification: true,
+            });
+        },
+        edit(target, messageId, html) {
+            return replyTransport.editRenderedMessage(target.chatId, messageId, Replies.renderTelegramMessage(html, { mode: "html" }), { target });
+        },
+        recordFailure(error) {
+            recordRuntimeEvent("delivery", error, { phase: "work-status" });
         },
     });
     const { mutation: queueMutationRuntime, dispatchNext: dispatchNextQueuedTelegramTurn, requestNextDispatchAnnouncement, cancelNextDispatchAnnouncement, watchdog: queueDispatchWatchdogRuntime, midRunSteer, } = Bindings.createTelegramQueueBindingRuntime({
@@ -1731,6 +1754,7 @@ export default function (pi) {
     // --- Lifecycle Hooks ---
     Bindings.registerTelegramLifecycleRuntimeHooks({
         pi,
+        workStatusRuntime,
         sessionLifecycleRuntime: {
             ...sessionLifecycleRuntime,
             onModelSelect: currentModelRuntime.onModelSelect,

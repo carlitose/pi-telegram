@@ -56,6 +56,7 @@ import * as Updates from "./updates.ts";
 import * as Voice from "./voice.ts";
 import * as WorkspaceAdmission from "./workspace-admission.ts";
 import * as WorkspaceRetirement from "./workspace-retirement.ts";
+import * as WorkStatus from "./work-status.ts";
 
 type ActivePiModel = NonNullable<Pi.ExtensionContext["model"]>;
 
@@ -864,6 +865,31 @@ export default function (pi: Pi.ExtensionAPI) {
       sendMessage,
       sendRichMessage,
       editMessageText: editTelegramMessageText,
+    },
+  });
+  const workStatusRuntime = WorkStatus.createTelegramWorkStatusRuntime({
+    capture() {
+      const authority = publicationRuntime.capture();
+      return {
+        target: authority.target,
+        isCurrent() {
+          return !activeTurnRuntime.get()?.guestQueryId && authority.isCurrent();
+        },
+      };
+    },
+    send(target, html) {
+      return replyRuntime.sendTextReply(target.chatId, undefined, html, {
+        target, parseMode: "HTML", disableNotification: true,
+      });
+    },
+    edit(target, messageId, html) {
+      return replyTransport.editRenderedMessage(
+        target.chatId, messageId,
+        Replies.renderTelegramMessage(html, { mode: "html" }), { target },
+      );
+    },
+    recordFailure(error) {
+      recordRuntimeEvent("delivery", error, { phase: "work-status" });
     },
   });
   const {
@@ -2013,6 +2039,7 @@ export default function (pi: Pi.ExtensionAPI) {
 
   Bindings.registerTelegramLifecycleRuntimeHooks({
     pi,
+    workStatusRuntime,
     sessionLifecycleRuntime: {
       ...sessionLifecycleRuntime,
       onModelSelect: currentModelRuntime.onModelSelect,

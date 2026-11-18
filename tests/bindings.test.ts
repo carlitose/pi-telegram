@@ -1215,6 +1215,7 @@ test("Lifecycle binding disconnects only graceful quit and preserves cleanup aft
       capture: () => ({ target: { chatId: 7 }, isCurrent: () => true }),
     },
     assistantOutputRuntime: { start: () => {}, stop: () => {} },
+    workStatusRuntime: { update: () => {}, reset: () => {} },
     sessionLifecycleRuntime: {
       onSessionStart: async () => {
         events.push("session-start");
@@ -1348,6 +1349,7 @@ test("Lifecycle binding disconnects only graceful quit and preserves cleanup aft
 
 test("Lifecycle binding routes native typing, previews, and normalized activity", { timeout: 5000 }, async () => {
   const events: string[] = [];
+  const workStates: unknown[] = [];
   const harness = createBindingApiHarness();
   const runtime = Runtime.createTelegramBridgeRuntime();
   let activeTurn = false;
@@ -1385,6 +1387,10 @@ test("Lifecycle binding routes native typing, previews, and normalized activity"
     publicationRuntime: {
       ...Activity.createTelegramActivityPublicationRuntime(),
       capture: () => ({ target: { chatId: 7 }, isCurrent: () => true }),
+    },
+    workStatusRuntime: {
+      update: (change: unknown) => workStates.push(change),
+      reset: () => workStates.push("reset"),
     },
     assistantOutputRuntime: {
       start: () => events.push("assistant-output:start"),
@@ -1530,6 +1536,17 @@ test("Lifecycle binding routes native typing, previews, and normalized activity"
     {} as ExtensionContext,
   );
 
+  assert.equal(workStates.some((state) => JSON.stringify(state) === '{"agent":false}'), false);
+  await getRequiredBindingHandler(harness.handlers, "agent_settled")(
+    { type: "agent_settled" },
+    {} as ExtensionContext,
+  );
+  assert.deepEqual(workStates, [
+    { agent: true }, { waiting: true }, { waiting: false },
+    { compaction: true }, { compaction: false },
+    { compaction: true }, { waiting: true }, { waiting: false },
+    { compaction: false }, { agent: false },
+  ]);
   await deps.publicationRuntime.enqueue(async () => {});
   const expected = [
     "activity:agent-start:none",
@@ -1559,6 +1576,7 @@ test("Lifecycle binding routes native typing, previews, and normalized activity"
     "typing:42:8",
     "activity:compact-end:unknown",
     "send:**✅ Compaction completed.**",
+    "activity:agent-settled",
   ];
   // Pi hooks keep their order without waiting for the independently delivered projection.
   assert.deepEqual(events.filter((event) => !event.startsWith("send:")), expected.filter((event) => !event.startsWith("send:")));

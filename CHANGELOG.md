@@ -4,6 +4,11 @@
 
 ## Unreleased
 
+## 0.1.9: Visible Thread work status
+
+- `Thread work status`: A silent message inside the exact chat/Thread now shows Pi working, waiting for extension-owned input, or idle, without relying on client typing UI. It updates through retries and compaction, reports unknown on compaction timeout, and fences stale session/transport work. Idle means the run settled, not task success; disconnect/crash may leave the last observation visible.
+- `Voice input`: Documented the optional `@carlitose86/pi-telegram-stt` companion for local voice-note transcription with operator-selected engines and models. It remains separately installed/configured; existing bridge inbound handlers retain priority.
+
 ## 0.1.8: Workspace slots after unclean exits
 
 - `Workspace slots`: A Pi that ends without a clean exit (crash, kill, or closing its window on Windows) no longer holds its Workspace letter forever. When the leader starts and when `A`–`Z` are full, it detaches owners whose process is gone and marks bindings whose known owners are all gone as inactive, so pressure rotation can reuse their letters; this never deletes a Thread. Leader bindings also keep complete journal evidence across restarts.
